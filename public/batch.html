@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch · Fish Passport</title><link rel="stylesheet" href="/app.css"><script src="/i18n.js"></script><script src="/app.js"></script>
+<script src="/vendor/vis-network.min.js"></script></head>
+<body><div class="wrap">
+  <div id="head" class="card"><p class="muted">Loading…</p></div>
+  <div id="pending"></div>
+  <div id="actions"></div>
+  <h2 data-i18n="lineage">Lineage</h2><div id="graph"></div>
+  <h2 data-i18n="journey">Journey</h2><div id="journey"></div>
+  <div class="qr card"><img id="qr" alt="QR"><br><a id="qrLink" class="btn secondary" target="_blank" data-i18n="print_qr">Print / save QR</a><a id="traceLink" class="btn secondary" target="_blank" data-i18n="trace">Public trace page</a></div>
+</div>
+<script>
+const me = requireActor();
+const id = location.pathname.split('/').pop().toUpperCase();
+const sellRoles = ['trader', 'processor', 'retailer', 'transporter']; // who can claim "I bought / picked up this batch"
+const carrier = me.role === 'transporter';
+// wording for a pending hand-over seen from my side: a transporter picks up / delivers, everyone else buys / sells
+const saysKey = (p, mySide) => mySide === 'buyer_kg'
+  ? (p.seller_role === 'transporter' ? 'says_delivered_you' : 'says_sold_you')
+  : (p.buyer_role === 'transporter' ? 'says_picked_up' : 'says_bought_from_you');
+async function load() {
+  let data;
+  try { data = await api('/api/batches/' + id); } catch (err) { $('#head').innerHTML = `<b>${esc(err.message)}</b>`; return; }
+  const b = data.batch, mine = b.owner_id === me.id;
+  $('#head').innerHTML = `
+    <div class="row"><span class="id big">${b.id}</span><span class="badge ${b.status}">${b.status}</span></div>
+    <div class="big-line"><b>${b.quantity_kg} kg</b> ${esc(b.product === 'Whole fish' ? b.species : b.product + ' · ' + b.species)}</div>
+    <div class="muted">${t('owner')}: <b>${esc(b.owner_name)}</b> (${b.owner_role}, ${esc(b.owner_location || '')})</div>
+    <div class="muted">${b.grade ? 'Grade ' + b.grade + ' · ' : ''}${esc(b.harbour || '')}${b.vessel ? ' · boat ' + esc(b.vessel) : ''} · landed ${fmtDate(b.landed_at)}</div>`;
+  $('#qr').src = `/api/batches/${b.id}/qr.png`; $('#qrLink').href = `/api/batches/${b.id}/qr.png`; $('#traceLink').href = `/trace/${b.id}`;
+
+  // pending hand-overs on this batch
+  $('#pending').innerHTML = data.pending.map(p => {
+    const mySide = p.seller_id === me.id ? 'seller_kg' : p.buyer_id === me.id ? 'buyer_kg' : null;
+    const theirs = mySide === 'seller_kg' ? p.buyer_kg : p.seller_kg;
+    if (mySide && p[mySide] == null) return `<form class="card" data-confirm="${p.id}">
+        <b>${esc(mySide === 'buyer_kg' ? p.seller_name : p.buyer_name)} ${t(saysKey(p, mySide))} ${theirs} kg.</b> ${t('match_q')}
+        <label data-i18n="weight">Weight (kg)</label><input name="quantity_kg" type="number" step="0.1" value="${theirs}" required>
+        <div class="grid2"><button class="btn ok" type="submit" data-i18n="confirm">Confirm</button><button class="btn bad" type="button" data-reject="${p.id}" data-i18n="reject">Reject</button></div></form>`;
+    return `<div class="card"><span class="badge pending">${t('pending')}</span> ${esc(p.seller_name)} → ${esc(p.buyer_name)}, ${p.seller_kg ?? p.buyer_kg} kg</div>`;
+  }).join('');
+
+  // actions
+  let html = '';
+  if (b.status === 'active' && mine && me.role !== 'retailer') { // owner (or carrier) hands the batch on
+    const list = (await actors()).filter(a => a.id !== me.id && a.role !== 'authority' && a.role !== 'fisher');
+    html += `<form class="card" id="sell"><h2 data-i18n="${carrier ? 'record_delivery' : 'record_sale'}">Record hand-over</h2>
+      <label data-i18n="${carrier ? 'deliver_to' : 'sold_to'}">Sold to</label><select name="counterparty_id">${list.map(a => `<option value="${a.id}">${esc(a.name)} (${a.role})</option>`).join('')}</select>
+      <label data-i18n="weight">Weight (kg)</label><input name="quantity_kg" type="number" step="0.1" max="${b.quantity_kg}" value="${b.quantity_kg}" required>
+      ${carrier ? '' : '<label data-i18n="price">Price per kg</label><input name="price" type="number" step="1" placeholder="₹">'}
+      <button class="btn" type="submit" data-i18n="${carrier ? 'record_delivery' : 'record_sale'}">Record hand-over</button>
+      <p class="muted">${t(carrier ? 'receiver_confirms' : 'buyer_confirms')}</p></form>`;
+  }
+  if (b.status === 'active' && mine && me.role === 'retailer') {
+    html += `<form class="card" id="sale"><h2 data-i18n="sell_consumer">Sold to consumer</h2>
+      <p class="muted">${t('closes_batch')}</p>
+      <button class="btn ok" type="submit" data-i18n="sell_consumer">Sold to consumer</button></form>`;
+  }
+  if (b.status === 'active' && mine && me.role === 'processor') html += `<a class="btn secondary" href="/process" data-i18n="process">Process</a>`;
+  if (b.status === 'active' && mine && me.role === 'trader') html += `<a class="btn secondary" href="/merge" data-i18n="merge">Combine</a>`;
+  if (b.status === 'active' && !mine && sellRoles.includes(me.role) && !data.pending.some(p => p.buyer_id === me.id)) {
+    html += `<form class="card" id="buy"><h2 data-i18n="${carrier ? 'i_picked_up' : 'i_bought'}">I bought from this batch</h2>
+      <label data-i18n="weight">Weight (kg)</label><input name="quantity_kg" type="number" step="0.1" value="${b.quantity_kg}" required>
+      ${carrier ? '' : '<label data-i18n="price">Price per kg</label><input name="price" type="number" step="1" placeholder="₹">'}
+      <button class="btn" type="submit" data-i18n="${carrier ? 'i_picked_up' : 'i_bought'}">I bought from this batch</button>
+      <p class="muted">${esc(b.owner_name)} ${t('seller_confirms')}</p></form>`;
+  }
+  $('#actions').innerHTML = html;
+  applyI18n();
+  renderGraph($('#graph'), data.lineage, b.id);
+  await renderJourney($('#journey'), data.lineage.events.filter(e => e.batch_id === b.id || ['TRANSFER', 'RECEIVE', 'PROCESS', 'MERGE', 'LANDING', 'SALE'].includes(e.type)));
+}
+
+async function post(path, body, msg) { try { const r = await api(path, body); toast(msg(r)); await load(); } catch (err) { toast(err.message, true); } }
+document.addEventListener('submit', e => {
+  e.preventDefault(); const f = e.target; const v = Object.fromEntries(new FormData(f));
+  if (f.id === 'sell') post('/api/transfers', { batch_id: id, actor_id: me.id, counterparty_id: Number(v.counterparty_id), quantity_kg: Number(v.quantity_kg), price: v.price ? Number(v.price) : null },
+    r => r.transfer.status === 'confirmed' ? `Matched the buyer's record. Confirmed → ${r.transfer.child_id}` : r.transfer.status === 'disputed' ? 'Weights differ — flagged as dispute' : 'Recorded. Waiting for the buyer to confirm.');
+  if (f.id === 'buy') post('/api/transfers', { batch_id: id, actor_id: me.id, quantity_kg: Number(v.quantity_kg), price: v.price ? Number(v.price) : null },
+    r => r.transfer.status === 'confirmed' ? `Matched the seller's record. You now own ${r.transfer.child_id}` : r.transfer.status === 'disputed' ? 'Weights differ — flagged as dispute' : 'Recorded. Waiting for the seller to confirm.');
+  if (f.id === 'sale') post('/api/sales', { batch_id: id, actor_id: me.id, client_id: crypto.randomUUID() }, () => 'Sale recorded. Batch closed.');
+  if (f.dataset.confirm) post(`/api/transfers/${f.dataset.confirm}/confirm`, { actor_id: me.id, quantity_kg: Number(v.quantity_kg) },
+    r => r.transfer.status === 'confirmed' ? `Confirmed → ${r.transfer.child_id}` : 'Weights differ — flagged as dispute');
+});
+document.addEventListener('click', e => { const b = e.target.closest('[data-reject]'); if (b) post(`/api/transfers/${b.dataset.reject}/reject`, { actor_id: me.id }, () => 'Rejected'); });
+load();
+</script></body></html>
