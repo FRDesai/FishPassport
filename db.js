@@ -70,7 +70,7 @@ db.exec(`
     resolved_at TEXT
      );
 
-     CREATE INDEX IF NOT EXISTS idx_events_batch ON events(batch_id)
+     CREATE INDEX IF NOT EXISTS idx_events_batch ON events(batch_id);
      CREATE INDEX IF NOT EXISTS idx_transfers_batch ON transfers(batch_id,status);
      
     `);
