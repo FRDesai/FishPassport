@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial scale=1">
+<title>Fish Passport</title><link rel="stylesheet" href="/app.css"><script src="/i18n.js"></script><script src="/app.js"></script></head>
+<body><div class="wrap">
+ <div class="hero">
+     <h1 data-i18n="brand">Fish Passport</h1>
+     <p class="lead" data-i18n="login_lead">Follow a fish from the boat to your plate. Every hand-over is confirmed by both the seller and the buyer, so the record cannot be faked</p>
+ </div>
+
+ <a class="card link consumer" href="/scan">
+    <div><b data-i18n="shopper">I am a shopper</b>
+    <div class="muted" data-i18n="shopper_desc">Scan the QR on a fish packet to see where it came from. No sign-in needed.</div></div>
+    <div class="chev"></div>
+ </a>
+
+ <h2 class="pick" data-i18n="pick_title">Or sign in as someone in the chain</h2>
+ <form id="login" class="card login">
+    <div class="grid2">
+        <div><label data-i18n="phone">Mobile number</label><input name="phone" inputmode="numeric" autocomplete="tel" placeholder="99000 00001" required></div>
+      <div><label data-i18n="pin">4-digit PIN</label><input name="pin" type="password" inputmode="numeric" maxlength="4" autocomplete="current-password" placeholder="••••" required></div>
+    </div>
+    <button class="btn" type="submit" data-i18n="sign_in">Sign in</button>
+ </form>
+
+ <details id="demo" class="card">
+    <summary><b data-i18n="demo_title">Demo accounts</b><span class="muted" data-i18n="demo_hint">Tap a name to fill in the number. Every demo account uses PIN 1234.</span></summary>
+    <p class="muted" data-i18n="pick_hint">Sign in with your mobile number and PIN. The fish moves through the roles in this order:</p>
+    <div id="roles" class="roles"><p class="muted">Loading…</p></div>
+</details>
+ </div>
+
+<script>
+if (Session.actor && Session.token) location.replace(Session.actor.role === 'authority' ? '/admin' : '/home');
+const ROLES = [
+  { role: 'fisher',    title: 'role_fisher',    desc: 'role_fisher_desc' },
+  { role: 'trader',    title: 'role_trader',    desc: 'role_trader_desc' },
+  { role: 'transporter', title: 'role_transporter', desc: 'role_transporter_desc' },
+  { role: 'processor', title: 'role_processor', desc: 'role_processor_desc' },
+  { role: 'retailer',  title: 'role_retailer',  desc: 'role_retailer_desc' },
+  { role: 'authority', title: 'role_authority', desc: 'role_authority_desc' },
+];
+
+
+const form = $('#login');
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = form.querySelector('button'); btn.disabled = true; btn.textContent = t('signing_in');
+  try {
+    const { token, actor } = await api('/api/login', { phone: form.phone.value, pin: form.pin.value });
+    Session.set(actor, token);
+    location.href = actor.role === 'authority' ? '/admin' : '/home';
+    return;
+  } catch (err) { toast(err.message, true); form.pin.value = ''; form.pin.focus(); }
+  btn.disabled = false; btn.textContent = t('sign_in');
+});
+
+(async () => {
+  const list = await api('/api/demo-accounts');
+  $('#roles').innerHTML = ROLES.map((r, i) => `
+    <div class="role-card">
+      <div class="role-head"><span class="step">${i + 1}</span>
+        <div><h3>${esc(t(r.title))}</h3><div class="muted">${esc(t(r.desc))}</div></div></div>
+      <div class="people">${list.filter(a => a.role === r.role).map(a =>
+        `<button type="button" class="person" data-phone="${esc(a.phone || '')}"><b>${esc(a.name)}</b><span>${esc(a.phone || '')} · ${esc(a.location || '')}</span></button>`).join('') || `<span class="muted">${esc(t('nobody_yet'))}</span>`}</div>
+    </div>`).join('');
+  $('#roles').addEventListener('click', e => {
+    const btn = e.target.closest('.person'); if (!btn) return;
+    form.phone.value = btn.dataset.phone; form.pin.value = '1234';
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' }); form.querySelector('button').focus();
+  });
+})();
+</script></body></html>

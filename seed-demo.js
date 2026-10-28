@@ -1,6 +1,6 @@
 
 
-const BASE= process.env.PUBLIC_URL || 'https://localhost:8000';
+const BASE= process.env.API_BASE_URL || 'https://localhost:8000';
 
 const PHONES= {suresh: 9900000001, ravi: 9900000003, coastal: 9900000005, truck: 9900000008 };
 
@@ -8,7 +8,7 @@ const tokens={};
 
 async function call(method, path, body, who){
  const headers={'Content-Type' : 'application/json'};
-    if(who) headers.Authorization = 'Bearer' +tokens[who];
+    if(who) headers.Authorization =  `Bearer ${tokens[who]}`
     const r = await fetch(BASE +path,{method,headers,body:body? JSON.stringify(body):undefined});
     const data = await r.json();
     if(!r.ok) throw new Error(path + ' → ' + data.error);
@@ -20,7 +20,7 @@ const get=(path,who)=> call('GET', path, null, who);
 
 async function handOver(batchId, seller, buyer, kg, price){
  await post('/api/transfers', { batch_id: batchId, counterparty_id: (await get('/api/actors', buyer)).find(a => a.phone === PHONES[buyer]).id, quantity_kg: kg, price }, seller);
- const inbox=await get('api/inbox',buyer);
+ const inbox=await get('/api/inbox',buyer);
  const t= inbox.find(x => x.batch_id ==batchId);
  const r= await post(`/api/transfers/${t.id}/confirm`, {}, buyer);
  console.log(`  ${batchId} → ${kg} kg → ${buyer}: ${r.transfer.status} (${r.transfer.child_id})`);
