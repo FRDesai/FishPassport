@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial scale=1">
+<title>Find catch . Fish Passport</title><link rel="stylesheet" href="/app.css"><script src="/i18n.js"></script><script src="/app.js"></script>
+<script scr="/vendor/html5-qrcode.min.js"></script></head>
+<body><div class="wrap">
+    <h1 data-i18n="scan">Find Catch</h1>
+    <div id="buyFromFisher" class="card" style="display:none"></div>
+    <b><span data-i18n="buy_from_fisher">Buy from a fisher</span></b>
+    <div class="muted" data-i18n="buy_from_fisher_hint">Pick the fisher you are buying from and tap the catch. No batch number needed.</div>
+    <select id="fisherPick"></select>
+    <div id="fisherBatches" class="mt"></div>
+</div>
+
+<div id="reader" class="card"></div>
+<p id="camNote" class="muted" data-i18n="scan_hint">Point the camera at a Fish Passport QR sticker. (Camera needs HTTPS or localhost.)</p>
+  <form id="manual" class="card">
+    <label data-i18n="or_type">Or type the batch ID</label>
+    <input name="id" placeholder="FP-MLP-7K2Q" autocapitalize="characters" class="upper">
+    <button class="btn secondary" type="submit" data-i18n="open">Open</button>
+  </form>
+</div>
+<script>
+
+const me = Session.actor;
+function go(text) {
+  const m = String(text).toUpperCase().match(/FP-[A-Z0-9]+-[A-Z0-9]+/);
+  if (!m) { toast(t('not_code'), true); return; }
+  location.href = (me ? '/batch/' : '/trace/') + m[0];
+}
+
+$('#manual').addEventListener('submit', e => { e.preventDefault(); go(e.target.id.value); });
+if (me && (me.role === 'trader' || me.role === 'transporter')) (async () => {
+  if (me.role === 'transporter') { // same picker, carrier wording
+    $('#buyFromFisher [data-i18n="buy_from_fisher"]').dataset.i18n = 'pickup_from_fisher';
+    $('#buyFromFisher [data-i18n="buy_from_fisher_hint"]').dataset.i18n = 'pickup_from_fisher_hint';
+    applyI18n($('#buyFromFisher'));
+  }
+  const fishers = (await actors()).filter(a => a.role === 'fisher');
+  $('#fisherPick').innerHTML = `<option value="">${esc(t('choose_fisher'))}</option>` +
+    fishers.map(f => `<option value="${f.id}">${esc(f.name)} · ${esc(f.location || '')}</option>`).join('');
+  $('#buyFromFisher').style.display = '';
+  $('#fisherPick').addEventListener('change', async e => {
+    const id = e.target.value; const box = $('#fisherBatches');
+    if (!id) { box.innerHTML = ''; return; }
+    box.innerHTML = '<p class="muted">Loading…</p>';
+    try {
+      const list = await api(`/api/actors/${id}/batches`);
+      box.innerHTML = list.length ? list.map(b => `
+        <a class="card link fisher-batch" href="/batch/${b.id}">
+          <div><b>${b.quantity_kg} kg</b> ${esc(b.species)}</div>
+          <div class="muted">${esc(b.harbour || '')} · ${fmtDate(b.landed_at || b.created_at)} · <span class="id">${b.id}</span></div>
+        </a>`).join('') : `<p class="muted">${esc(t('no_fisher_batches'))}</p>`;
+    } catch (err) { box.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+  });
+})();
+
+try {
+  const scanner = new Html5Qrcode('reader');
+  scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: 240 }, text => { scanner.stop().catch(() => {}); go(text); })
+    .catch(err => { $('#camNote').textContent = 'Camera not available here (' + err + '). Type the ID below.'; });
+} catch (err) { $('#camNote').textContent = 'Camera not available. Type the ID below.'; }
+</script></body></html>
