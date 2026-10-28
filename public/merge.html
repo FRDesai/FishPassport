@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Combine · Fish Passport</title><link rel="stylesheet" href="/app.css"><script src="/i18n.js"></script><script src="/app.js"></script></head>
+<body><div class="wrap">
+  <h1 data-i18n="merge">Combine</h1>
+  <p class="muted" data-i18n="merge_hint">Putting fish from several batches into one crate? Pick them here. They become one new batch with its own QR, and the trace still shows every boat.</p>
+  <form id="f" class="card">
+    <div id="inputs"><p class="muted" data-i18n="loading">Loading…</p></div>
+    <div class="muted"><span data-i18n="crate_total">Total in the crate</span>: <b id="inKg">0</b> kg</div>
+    <button class="btn" type="submit" data-i18n="create_crate">Combine into one batch</button>
+    <p class="muted" data-i18n="merge_same_fish">Only batches of the same fish can be combined.</p>
+  </form>
+</div>
+<script>
+const me = requireActor();
+if (me.role !== 'trader') { toast(t('only_trader'), true); }
+let batches = [];
+(async () => {
+  batches = (await api('/api/me/batches')).batches;
+  $('#inputs').innerHTML = batches.length ? batches.map(b => `<label class="checkrow"><input type="checkbox" name="in" value="${b.id}"> <span><span class="id">${b.id}</span><br>${b.quantity_kg} kg ${esc(b.species)} · ${esc(b.harbour || '')}</span></label>`).join('') : `<p class="muted">${t('no_batches')}</p>`;
+})();
+$('#f').addEventListener('change', () => {
+  const sel = [...$('#f').querySelectorAll('input[name=in]:checked')].map(c => batches.find(b => b.id === c.value));
+  $('#inKg').textContent = Math.round(sel.reduce((s, b) => s + b.quantity_kg, 0) * 10) / 10;
+});
+$('#f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const input_ids = [...$('#f').querySelectorAll('input[name=in]:checked')].map(c => c.value);
+  try {
+    const b = await api('/api/merge', { actor_id: me.id, input_ids });
+    location.href = '/batch/' + b.id;
+  } catch (err) { toast(err.message, true); }
+});
+</script></body></html>
