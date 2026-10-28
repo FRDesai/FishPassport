@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Process · Fish Passport</title><link rel="stylesheet" href="/app.css"><script src="/i18n.js"></script><script src="/app.js"></script></head>
+<body><div class="wrap">
+  <h1 data-i18n="process">Process</h1>
+  <p class="muted" data-i18n="process_hint">Pick the batches going into one processing run. They are merged into a new output batch with its own QR.</p>
+  <form id="f" class="card">
+    <div id="inputs"><p class="muted" data-i18n="loading">Loading…</p></div>
+    <div class="muted"><span data-i18n="selected_input">Selected input</span>: <b id="inKg">0</b> kg</div>
+    <label data-i18n="output_product">Output product</label>
+    <select name="product"><option>Fillet</option><option>Cleaned &amp; gutted</option><option>Frozen block</option><option>Dried fish</option><option>Smoked</option></select>
+    <label data-i18n="output_weight">Output weight (kg)</label>
+    <input name="quantity_kg" type="number" step="0.1" required placeholder="0.0">
+    <button class="btn" type="submit" data-i18n="create_output">Create output batch</button>
+  </form>
+  </div>
+<script>
+const me = requireActor();
+if (me.role !== 'processor') { toast(t('only_processor'), true); }
+let batches = [];
+(async () => {
+  batches = (await api('/api/me/batches')).batches;
+  $('#inputs').innerHTML = batches.length ? batches.map(b => `<label class="checkrow"><input type="checkbox" name="in" value="${b.id}"> <span><span class="id">${b.id}</span><br>${b.quantity_kg} kg ${esc(b.species)}</span></label>`).join('') : `<p class="muted">${t('no_batches')}</p>`;
+})();
+$('#f').addEventListener('change', () => {
+  const sel = [...$('#f').querySelectorAll('input[name=in]:checked')].map(c => batches.find(b => b.id === c.value));
+  const kg = sel.reduce((s, b) => s + b.quantity_kg, 0);
+  $('#inKg').textContent = Math.round(kg * 10) / 10;
+  if (!$('#f').quantity_kg.value) $('#f').quantity_kg.value = Math.round(kg * 0.6 * 10) / 10; // typical fillet yield
+});
+$('#f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const input_ids = [...$('#f').querySelectorAll('input[name=in]:checked')].map(c => c.value);
+  try {
+    const b = await api('/api/process', { actor_id: me.id, input_ids, product: $('#f').product.value, quantity_kg: Number($('#f').quantity_kg.value) });
+    location.href = '/batch/' + b.id;
+  } catch (err) { toast(err.message, true); }
+});
+</script></body></html>
