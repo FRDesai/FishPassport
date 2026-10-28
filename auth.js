@@ -1,8 +1,9 @@
 // pin hashing and session tokens 
 
-const cryto= require ('crypto');
+// const cryto= require ('crypto');
+const crypto = require('node:crypto');
 
-const isPin = p => /^\d{4}$ /.test(String(p ??''));
+const isPin = p => /^\d{4}$/.test(String(p ?? ''));
 function hashPin(pin){
     const salt= crypto.randomBytes(8).toString('hex');
     return salt + ':' + crypto.createHash('sha256').update(salt + String(pin)).digest('hex');
