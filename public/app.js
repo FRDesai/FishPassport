@@ -1,5 +1,3 @@
-const { clear } = require("node:console");
-
 const Session = {
 get actor(){
     try{
@@ -59,17 +57,23 @@ try{
     }
     throw new Error('No Connection to Server');
 }
- const data = await r.json().catch(() => ({}));
-  if (r.status === 401 && Session.token && path !== '/api/login') { Session.clear(); location.href = '/'; } // session expired → sign in again
-  if (!r.ok) throw new Error(data.error || r.statusText);
-  return data;
+const data = await response.json().catch(() => ({}));
+
+if (response.status === 401 && Session.token && path !== '/api/login') {
+    Session.clear();
+    location.href = '/';
+}
+
+if (!response.ok) throw new Error(data.error || response.statusText);
+
+return data;
 }
 
 const Queue = {
     key: 'fp_queue',
     all(){
         try {
-            return localStorage.getItem(this.key) || '[]';
+            return JSON.parse(localStorage.getItem(this.key) || '[]');
         } catch (error) {
             return [];
         }
@@ -115,6 +119,26 @@ const NAV = {
   transporter: [['home', '/home'], ['scan', '/scan'], ['inbox', '/inbox']],
   authority: [['admin', '/admin'], ['scan', '/scan']],
 };
+
+
+function renderNav() {
+    const a = Session.actor;
+    const nav = document.createElement('div');
+    nav.className = 'nav';
+
+    const links = a ? NAV[a.role] || [] : [['scan', '/scan']];
+
+    nav.innerHTML = `<span class="brand">${t('brand')}</span>` +
+        links.map(([k, href]) =>
+            `<a href="${href}" class="${location.pathname === href ? 'active' : ''}">${t(k)}</a>`
+        ).join('') +
+        `<button onclick="toggleLang()">${lang() === 'en' ? 'ಕನ್ನಡ' : 'English'}</button>` +
+        (a
+            ? `<span class="who">${a.name} · ${a.role} · ${a.location || ''} <button onclick="logout()">${t('logout')}</button></span>`
+            : `<span class="who"><a href="/">Sign in</a></span>`);
+
+    document.body.prepend(nav);
+}
 
 function toast(msg, bad = false) {
   const el = document.createElement('div'); el.className = 'toast' + (bad ? ' bad' : ''); el.textContent = msg;
