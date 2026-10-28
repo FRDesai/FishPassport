@@ -46,9 +46,23 @@ function verifyPlivo(req, res, next){
   next();
 }
 
-function prompt(){}
+const speak = text => `<Speak language="${LANG}">${esc(text)}</Speak>`;
 
-function gather(){}
+function prompt(req, key, text) {
+  return fs.existsSync(path.join(CLIPS_DIR, key + '.mp3')) ? `<Play>${baseUrl(req)}/ivr/${key}.mp3</Play>` : speak(text);
+}
+function gather(req, action, numDigits, inner, extra = '') {
+  return `<GetDigits action="${baseUrl(req)}${action}" method="POST" numDigits="${numDigits}" timeout="8" retries="2" redirect="true"${extra}>${inner}</GetDigits>`;
+}
+
+const repond = () => {}
+
+const isOutbound = req => {}
+
+function callerActor(req){
+
+}
+
 
 const COUNTRY_CODE = process.env.IVR_COUNTRY_CODE || '91';
 const outboundEnabled = () => !!(process.env.PLIVO_AUTH_ID && process.env.PLIVO_AUTH_TOKEN && process.env.PLIVO_NUMBER);
@@ -74,17 +88,63 @@ function speciesMenu(req, actor, greet = true) {
     prompt(req, 'species', `Which fish did you land? ${SPECIES_MENU}.`);
   return gather(req, '/ivr/species', 1, inner) + prompt(req, 'noinput', 'We did not hear anything. Goodbye.') + '<Hangup/>';
 }
+const pendingFor = actor => db.prepare(`SELECT t.*, b.species, bu.name AS buyer_name, bu.role AS buyer_role FROM transfers t
+  JOIN batches b ON b.id = t.batch_id JOIN actors bu ON bu.id = t.buyer_id
+  WHERE t.status = 'pending' AND t.seller_id = ? AND t.seller_kg IS NULL AND t.buyer_kg IS NOT NULL ORDER BY t.id`).all(actor.id);
 
-function callerAlert(){
-
+  const shortSpecies = s => (Object.values(SPECIES).find(([full]) => full === s) || [s, s])[1];
+function handoverMenu(req, actor, t, greet) {
+  const text = speak(`${greet ? `Namaskara ${actor.name.split(' ')[0]}. ` : ''}${t.buyer_name} says they ${t.buyer_role === 'transporter' ? 'picked up' : 'bought'} ${t.buyer_kg} kilos of ${shortSpecies(t.species)} from you. ` +
+    'Press 1 to confirm, 2 to reject, or 3 to skip.');
+  return gather(req, '/ivr/handover?id=' + t.id, 1, text) + prompt(req, 'noinput', 'We did not hear anything. Goodbye.') + '<Hangup/>';
+}
+// Next waiting hand-over if any, else the species menu.
+function nextStep(req, actor, greet = false) {
+  const [t] = pendingFor(actor);
+  return t ? handoverMenu(req, actor, t, greet) : speciesMenu(req, actor, greet);
 }
 
-function askWeight(){
-
+// Up to 4 digits, finished with #: "50#" → 50 kg.
+function askWeight(req, species) {
+  return gather(req, '/ivr/weight?species=' + species, 4, prompt(req, 'weight', 'How many kilos? Type the number, then press hash.'), ' finishOnKey="#"') +
+    prompt(req, 'noinput', 'We did not hear anything. Goodbye.') + '<Hangup/>';
 }
+
+
+
 
 function mountIVR(){
+     const r = express.Router();
+  r.use(express.urlencoded({ extended: false }));
+  r.use(verifyPlivo);
 
+    r.post('/answer', (req, res) => {
+    const actor = callerActor(req);
+    console.log(`IVR ${isOutbound(req) ? 'outbound call to' : 'call from'} ${(isOutbound(req) ? req.body.To : req.body.From) || '(no number)'} → ${actor ? actor.name : 'NOT REGISTERED'}`);
+    if (!actor) return respond(res, prompt(req, 'unknown', 'This phone number is not registered with Fish Passport. Goodbye.') + '<Hangup/>');
+    // We rang them about a hand-over; if it was answered from the app meanwhile, say so instead of the landing menu.
+    if (isOutbound(req) && !pendingFor(actor).length) {
+      return respond(res, speak(`Namaskara ${actor.name.split(' ')[0]}. Fish Passport. Your hand-over was already answered. Goodbye.`) + '<Hangup/>');
+    }
+    respond(res, nextStep(req, actor, true));
+  });
+
+    r.post('/handover', (req, res) => {
+    const actor = callerActor(req);
+    if (!actor) return respond(res, '<Hangup/>');
+    const t = pendingFor(actor).find(x => String(x.id) === String(req.query.id));
+    if (!t) return respond(res, nextStep(req, actor));
+    const d = String(req.body.Digits || '');
+    if (d === '1') {
+      const out = req.app.locals.answerTransfer(t, actor.id, t.buyer_kg);
+      if (out.error) return respond(res, speak(out.error) + nextStep(req, actor));
+      return respond(res, speak(`Confirmed. ${t.buyer_kg} kilos to ${t.buyer_name}.`) + nextStep(req, actor));
+    }
+    if (d === '2') { req.app.locals.rejectTransfer(t, actor.id); return respond(res, speak('Rejected.') + nextStep(req, actor)); }
+    respond(res, speciesMenu(req, actor, false));
+  });
+ 
+    app.use('/ivr', r);
 }
 
 
