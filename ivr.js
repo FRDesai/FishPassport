@@ -185,4 +185,4 @@ function mountIVR(){
 
 
 module.exports = mountIVR;
-module.exports.callFisher;
+module.exports.callFisher = callFisher;
