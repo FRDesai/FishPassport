@@ -55,13 +55,14 @@ function gather(req, action, numDigits, inner, extra = '') {
   return `<GetDigits action="${baseUrl(req)}${action}" method="POST" numDigits="${numDigits}" timeout="8" retries="2" redirect="true"${extra}>${inner}</GetDigits>`;
 }
 
-const repond = () => {}
+const respond = (res, inner) => res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<Response>${inner}</Response>`);
 
-const isOutbound = req => {}
-
-function callerActor(req){
-
+const isOutbound = req => String(req.body.Direction || '').toLowerCase() === 'outbound';
+function callerActor(req) {
+  const phone = String((isOutbound(req) ? req.body.To : req.body.From) || '').replace(/\D/g, '').slice(-10);
+  return db.prepare(`SELECT * FROM actors WHERE phone = ? AND role = 'fisher'`).get(phone);
 }
+
 
 
 const COUNTRY_CODE = process.env.IVR_COUNTRY_CODE || '91';
@@ -142,6 +143,41 @@ function mountIVR(){
     }
     if (d === '2') { req.app.locals.rejectTransfer(t, actor.id); return respond(res, speak('Rejected.') + nextStep(req, actor)); }
     respond(res, speciesMenu(req, actor, false));
+  });
+   
+    r.post('/species', (req, res) => {
+    const actor = callerActor(req);
+    if (!actor) return respond(res, '<Hangup/>');
+    const d = String(req.body.Digits || '');
+    if (!SPECIES[d]) return respond(res, speciesMenu(req, actor, false));
+    respond(res, askWeight(req, d));
+  });
+   
+    r.post('/weight', (req, res) => {
+    const actor = callerActor(req);
+    const species = String(req.query.species || '');
+    if (!actor || !SPECIES[species]) return respond(res, '<Hangup/>');
+    const kg = parseInt(String(req.body.Digits || '').replace(/\D/g, ''), 10);
+    if (!(kg > 0)) return respond(res, askWeight(req, species));
+    if (kg > MAX_KG) return respond(res, speak(`${kg} kilos is too large. Please type the weight again.`) + askWeight(req, species));
+    const readback = speak(`You landed ${kg} kilos of ${SPECIES[species][1]}. Press 1 to confirm, or 2 to start again.`);
+    respond(res, gather(req, `/ivr/confirm?species=${species}&amp;kg=${kg}`, 1, readback) + prompt(req, 'noinput', 'We did not hear anything. Goodbye.') + '<Hangup/>');
+  });
+
+   r.post('/confirm', (req, res) => {
+    const actor = callerActor(req);
+    const species = String(req.query.species || '');
+    const kg = Number(req.query.kg);
+    if (!actor || !SPECIES[species] || !(kg > 0)) return respond(res, '<Hangup/>');
+    if (String(req.body.Digits) !== '1') return respond(res, speciesMenu(req, actor, false));
+    // Harbour and boat come from the fisher's profile. client_id makes a replayed callback return the same batch.
+    // Known harbour → its batch prefix; any other location is still recorded as the harbour name.
+    const loc = (actor.location || '').trim();
+    const harbour = Object.keys(HARBOUR_CODES).find(h => loc.toLowerCase().includes(h.toLowerCase())) || loc || null;
+    const id = createLanding(actor, { species: SPECIES[species][0], quantity_kg: kg, harbour, vessel: actor.vessel,
+      client_id: 'ivr-' + (req.body.CallUUID || Date.now()), source: 'ivr' });
+    const spelled = id.replace(/-/g, ' ').split('').join(' ').replace(/\s+/g, ' ');
+    respond(res, speak(`Recorded. ${kg} kilos of ${SPECIES[species][1]}. Your batch number is ${spelled}. Again, ${spelled}. Thank you.`) + '<Hangup/>');
   });
  
     app.use('/ivr', r);
