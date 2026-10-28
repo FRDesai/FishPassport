@@ -1,5 +1,5 @@
 const cryto= require ('crypto');
-const db= require ('db');
+const db= require ('./db');
 
 const HARBOUR_CODES ={Malpe: 'MLP', Mangaluru: 'MNG', Karwar: 'KWR', Gangolli: 'GNG', Honnavar: 'HNV', Bhatkal: 'BTK' };
 const  ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
