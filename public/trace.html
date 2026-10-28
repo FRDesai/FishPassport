@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Where did this fish come from? · Fish Passport</title><link rel="stylesheet" href="/app.css"><script src="/i18n.js"></script><script src="/app.js"></script>
+<script src="/vendor/vis-network.min.js"></script></head>
+<body><div class="wrap">
+  <h1 data-i18n="trace_title">Where did this fish come from?</h1>
+  <div id="head" class="card"><p class="muted" data-i18n="loading">Loading…</p></div>
+  <div id="summary" class="grid3"></div>
+  <h2 data-i18n="from_boat">From boat to you</h2><div id="graph"></div>
+  <h2 data-i18n="journey">Journey</h2><div id="journey"></div>
+  <p class="muted center" data-i18n="trace_footer">Every hand-over above was confirmed by both parties. Fish Passport · GDST / EPCIS 2.0 compatible.</p>
+</div>
+<script>
+const id = location.pathname.split('/').pop().toUpperCase();
+(async () => {
+  let data;
+  try { data = await api('/api/batches/' + id); } catch (err) { $('#head').innerHTML = `<b>${esc(err.message)}</b>`; return; }
+  const b = data.batch, ev = data.lineage.events;
+  const landing = ev.find(e => e.type === 'LANDING');
+  const roots = data.lineage.nodes.filter(n => !data.lineage.edges.some(e => e.child_id === n.id));
+  const handshakes = ev.filter(e => e.type === 'TRANSFER').length;
+  const hours = landing ? Math.round((Date.now() - new Date(landing.data.landed_at || landing.created_at.replace(' ', 'T') + 'Z')) / 36e5) : null;
+  $('#head').innerHTML = `
+    <div class="row"><span class="id big">${b.id}</span><span class="badge ${b.status}">${b.status}</span></div>
+    <div class="big-line"><b>${esc(b.product === 'Whole fish' ? b.species : b.product + ' · ' + b.species)}</b></div>
+    <div class="muted">${t('now_with')} <b>${esc(b.owner_name)}</b>, ${esc(b.owner_location || '')}</div>
+    ${landing ? `<div class="muted">${t('landed_at_h')} <b>${esc(landing.data.harbour || '?')}</b>${landing.data.vessel ? ' by boat ' + esc(landing.data.vessel) : ''} on ${fmtDate(landing.data.landed_at || landing.created_at)} by ${esc(landing.actor_name)}</div>` : ''}`;
+  $('#summary').innerHTML = `
+    <div class="card stat"><div class="n">${roots.length}</div><div class="l">${t('boat_landings')}</div></div>
+    <div class="card stat"><div class="n">${handshakes}</div><div class="l">${t('confirmed_handovers')}</div></div>
+    <div class="card stat"><div class="n">${hours == null ? '–' : hours < 48 ? hours + ' h' : Math.round(hours / 24) + ' d'}</div><div class="l">${t('since_landing')}</div></div>`;
+  renderGraph($('#graph'), data.lineage, b.id);
+  await renderJourney($('#journey'), ev.filter(e => !['CLAIM', 'REJECT'].includes(e.type)));
+})();
+</script></body></html>

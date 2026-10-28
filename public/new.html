@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New landing · Fish Passport</title><link rel="stylesheet" href="/app.css"><script src="/i18n.js"></script><script src="/app.js"></script></head>
+<body><div class="wrap">
+  <h1 data-i18n="record_landing">Record landing</h1>
+  <form id="f" class="card">
+    <label data-i18n="species">Species</label>
+    <!-- First six = keypad 1–6 on the phone line (ivr.js SPECIES), same names so phone and app landings match. -->
+    <select name="species" required>
+      <option>Indian Mackerel (Bangude)</option><option>Oil Sardine (Boothai)</option><option>Seer Fish (Anjal)</option>
+      <option>Silver Pomfret (Manji)</option><option>Lady Fish (Kane)</option><option>Prawns</option>
+      <option>Kingfish (Surmai)</option><option>Tuna</option><option>Squid (Bondas)</option><option>Pink Perch (Kilimeen)</option>
+    </select>
+    <label data-i18n="weight">Weight (kg)</label>
+    <input name="quantity_kg" type="number" min="0.1" step="0.1" inputmode="decimal" required placeholder="0.0">
+    <div class="grid2">
+      <div><label data-i18n="grade">Grade</label><select name="grade"><option>A</option><option>B</option><option>C</option></select></div>
+      <div><label data-i18n="harbour">Harbour</label><select name="harbour"><option>Malpe</option><option>Mangaluru</option><option>Karwar</option><option>Gangolli</option><option>Honnavar</option><option>Bhatkal</option></select></div>
+    </div>
+    <label data-i18n="boat">Boat</label>
+    <input name="vessel" placeholder="e.g. IND-KA-07-MM-1234">
+    <label data-i18n="landed">Landed at</label>
+    <input name="landed_at" type="datetime-local">
+    <button class="btn" type="submit" data-i18n="record_landing">Record landing</button>
+  </form>
+</div>
+<script>
+const me = requireActor();
+const f = $('#f');
+f.landed_at.value = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+const clientId = crypto.randomUUID(); // same id on retry → server will not create a second batch
+f.addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(f));
+  body.actor_id = me.id; body.quantity_kg = Number(body.quantity_kg); body.client_id = clientId;
+  body.landed_at = body.landed_at ? new Date(body.landed_at).toISOString() : null;
+  try {
+    const r = await api('/api/landings', body, { queue: true });
+    if (r.queued) { toast(t('saved_offline')); setTimeout(() => location.href = '/home', 1500); return; }
+    location.href = '/batch/' + r.id;
+  } catch (err) { toast(err.message, true); }
+});
+</script></body></html>
