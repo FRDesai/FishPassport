@@ -311,7 +311,8 @@ app.post('/api/transfers', (req, res) => {
 
 
 app.get('/api/inbox', (req, res) => {
-  const a = Number(req.query.actor);
+//   const a = Number(req.query.actor);
+  const a = req.me.id; 
   res.json(db.prepare(`SELECT t.*, b.species, b.product, s.name AS seller_name, s.role AS seller_role, bu.name AS buyer_name, bu.role AS buyer_role
                        FROM transfers t JOIN batches b ON b.id = t.batch_id
                        JOIN actors s ON s.id = t.seller_id JOIN actors bu ON bu.id = t.buyer_id
