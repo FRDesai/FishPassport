@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My batches · Fish Passport</title><link rel="stylesheet" href="/app.css"><script src="/i18n.js"></script><script src="/app.js"></script></head>
+<body><div class="wrap">
+  <h1 data-i18n="home">My batches</h1>
+  <div id="inboxNote"></div>
+  <div id="list"><p class="muted" data-i18n="loading">Loading…</p></div>
+  <details id="pastWrap" class="card" style="display:none"><summary><b data-i18n="past_batches">Past batches (sold or processed)</b></summary><div id="past" class="mt"></div></details>
+  <a id="newBtn" class="btn" href="/new" style="display:none" data-i18n="record_landing">Record landing</a>
+  <a class="btn secondary" href="/scan" data-i18n="scan">Find catch</a>
+</div>
+<script>
+const me = requireActor();
+if (me.role === 'fisher') $('#newBtn').style.display = '';
+(async () => {
+  const { batches, past, inbox } = await api('/api/me/batches');
+  if (inbox) $('#inboxNote').innerHTML = `<a class="card link" href="/inbox">🔔 <b>${inbox}</b> ${t('waiting_confirm')}</a>`;
+  const card = b => `
+    <a class="card link" href="/batch/${b.id}">
+      <div class="row"><span class="id">${b.id}</span><span class="badge ${b.status}">${b.status}</span></div>
+      <div><b>${b.quantity_kg} kg</b> ${esc(b.product === 'Whole fish' ? b.species : b.product + ' (' + b.species + ')')}</div>
+      <div class="muted">${esc(b.harbour || '')} · ${fmtDate(b.created_at)}</div>
+    </a>`;
+  $('#list').innerHTML = batches.length ? batches.map(card).join('') : `<p class="muted">${t('no_batches')}</p>`;
+  if (past && past.length) { $('#past').innerHTML = past.map(card).join(''); $('#pastWrap').style.display = ''; }
+  applyI18n();
+})();
+</script></body></html>

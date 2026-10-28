@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inbox · Fish Passport</title><link rel="stylesheet" href="/app.css"><script src="/i18n.js"></script><script src="/app.js"></script></head>
+<body><div class="wrap">
+  <h1 data-i18n="inbox">Inbox</h1>
+  <p class="muted" data-i18n="inbox_hint">Hand-overs the other side recorded. Confirm with your own weight, or reject.</p>
+  <div id="list"><p class="muted" data-i18n="loading">Loading…</p></div>
+</div>
+<script>
+const me = requireActor();
+async function load() {
+  const rows = await api('/api/inbox');
+  $('#list').innerHTML = rows.length ? rows.map(p => {
+    const iAmBuyer = p.buyer_id === me.id, theirs = iAmBuyer ? p.seller_kg : p.buyer_kg;
+    return `<form class="card" data-id="${p.id}">
+      <div class="row"><a class="id" href="/batch/${p.batch_id}">${p.batch_id}</a><span class="muted">${esc(p.species)} · ${fmtDate(p.created_at)}</span></div>
+      <p><b>${esc(iAmBuyer ? p.seller_name : p.buyer_name)}</b> ${t(iAmBuyer ? (p.seller_role === 'transporter' ? 'says_delivered_you' : 'says_sold_you') : (p.buyer_role === 'transporter' ? 'says_picked_up' : 'says_bought_from_you'))} <b>${theirs} kg</b>${p.price ? ' @ ₹' + p.price + '/kg' : ''}.</p>
+      <label data-i18n="weight">Weight (kg)</label><input name="quantity_kg" type="number" step="0.1" value="${theirs}" required>
+      <div class="grid2"><button class="btn ok" type="submit" data-i18n="confirm">Confirm</button><button class="btn bad" type="button" data-reject="${p.id}" data-i18n="reject">Reject</button></div>
+    </form>`; }).join('') : `<p class="muted">${t('nothing_waiting')}</p>`;
+  applyI18n();
+}
+document.addEventListener('submit', async e => {
+  e.preventDefault(); const f = e.target;
+  try {
+    const r = await api(`/api/transfers/${f.dataset.id}/confirm`, { actor_id: me.id, quantity_kg: Number(f.quantity_kg.value) });
+    toast(r.transfer.status === 'confirmed' ? `Confirmed → ${r.transfer.child_id}` : 'Weights differ — flagged as dispute', r.transfer.status !== 'confirmed');
+    await load();
+  } catch (err) { toast(err.message, true); }
+});
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-reject]'); if (!b) return;
+  try { await api(`/api/transfers/${b.dataset.reject}/reject`, { actor_id: me.id }); toast('Rejected'); await load(); } catch (err) { toast(err.message, true); }
+});
+load();
+</script></body></html>
