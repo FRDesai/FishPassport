@@ -1,6 +1,6 @@
 const express = require('express');
 const path = require('path');
-const QRcode = require('qrcode');
+const QRCode = require('qrcode');
 const db = require('./db');
 const {buildEpcis} = require('./epcis');
 const {createLanding, newId}=require('./landings');
@@ -178,6 +178,12 @@ app.get('/api/actors/:id/batches', (req, res) => {
   res.json(db.prepare(`SELECT * FROM batches WHERE owner_id = ? AND status = 'active' ORDER BY created_at DESC, rowid DESC`).all(a.id));
 });
 
+// Fisheries Department registers fishers (so they can sign in and call the IVR). Phone is stored as 10 digits.
+function requireAuthority(req, res) {
+  const me = req.me;
+  if (!me || me.role !== 'authority') { bad(res, 403, 'Only the Fisheries Department can manage fishers'); return null; }
+  return me;
+}
 
 
 function phoneTaken(phone, exceptId) {
