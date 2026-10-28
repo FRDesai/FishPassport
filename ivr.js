@@ -48,9 +48,20 @@ function verifyPlivo(req, res, next){
 
 const speak = text => `<Speak language="${LANG}">${esc(text)}</Speak>`;
 
+const hasClip = key => fs.existsSync(path.join(CLIPS_DIR, key + '.mp3'));
+const play = (req, key) => `<Play>${baseUrl(req)}/ivr/${key}.mp3</Play>`;
 function prompt(req, key, text) {
-  return fs.existsSync(path.join(CLIPS_DIR, key + '.mp3')) ? `<Play>${baseUrl(req)}/ivr/${key}.mp3</Play>` : speak(text);
+  return hasClip(key) ? play(req, key) : speak(text);
 }
+// Per-call sentences are stitched from short recorded clips in the order given. If any clip is missing,
+// the whole English sentence is spoken instead.
+function say(req, text, ...keys) {
+  return keys.every(hasClip) ? keys.map(k => play(req, k)).join('') : speak(text);
+}
+const digitKeys = n => String(n).split('').map(c => 'd' + c);                                     // 50 → d5 d0
+const spellKeys = id => id.replace(/-/g, '').split('').map(c => (/\d/.test(c) ? 'd' : 'l') + c);  // FP-MLP-7KQ2 → lF lP lM …
+const speciesDigit = full => Object.keys(SPECIES).find(d => SPECIES[d][0] === full);
+
 function gather(req, action, numDigits, inner, extra = '') {
   return `<GetDigits action="${baseUrl(req)}${action}" method="POST" numDigits="${numDigits}" timeout="8" retries="2" redirect="true"${extra}>${inner}</GetDigits>`;
 }
@@ -95,8 +106,10 @@ const pendingFor = actor => db.prepare(`SELECT t.*, b.species, bu.name AS buyer_
 
   const shortSpecies = s => (Object.values(SPECIES).find(([full]) => full === s) || [s, s])[1];
 function handoverMenu(req, actor, t, greet) {
-  const text = speak(`${greet ? `Namaskara ${actor.name.split(' ')[0]}. ` : ''}${t.buyer_name} says they ${t.buyer_role === 'transporter' ? 'picked up' : 'bought'} ${t.buyer_kg} kilos of ${shortSpecies(t.species)} from you. ` +
-    'Press 1 to confirm, 2 to reject, or 3 to skip.');
+   const picked = t.buyer_role === 'transporter';
+  const text = (greet ? prompt(req, 'greeting', `Namaskara ${actor.name.split(' ')[0]}. Fish Passport.`) : '') +
+    say(req, `${t.buyer_name} says they ${picked ? 'picked up' : 'bought'} ${t.buyer_kg} kilos of ${shortSpecies(t.species)} from you. Press 1 to confirm, 2 to reject, or 3 to skip.`,
+      'buyer_says', ...digitKeys(t.buyer_kg), 'kilos', 'sp' + speciesDigit(t.species), picked ? 'picked_up' : 'bought', 'handover_options');
   return gather(req, '/ivr/handover?id=' + t.id, 1, text) + prompt(req, 'noinput', 'We did not hear anything. Goodbye.') + '<Hangup/>';
 }
 // Next waiting hand-over if any, else the species menu.
@@ -125,12 +138,14 @@ function mountIVR(app){
     if (!actor) return respond(res, prompt(req, 'unknown', 'This phone number is not registered with Fish Passport. Goodbye.') + '<Hangup/>');
     // We rang them about a hand-over; if it was answered from the app meanwhile, say so instead of the landing menu.
     if (isOutbound(req) && !pendingFor(actor).length) {
-      return respond(res, speak(`Namaskara ${actor.name.split(' ')[0]}. Fish Passport. Your hand-over was already answered. Goodbye.`) + '<Hangup/>');
+            return respond(res, prompt(req, 'greeting', `Namaskara ${actor.name.split(' ')[0]}. Fish Passport.`) +
+        prompt(req, 'already_answered', 'Your hand-over was already answered. Goodbye.') + '<Hangup/>');
+
     }
     respond(res, nextStep(req, actor, true));
   });
 
-    r.post('/handover', (req, res) => {
+   r.post('/handover', (req, res) => {
     const actor = callerActor(req);
     if (!actor) return respond(res, '<Hangup/>');
     const t = pendingFor(actor).find(x => String(x.id) === String(req.query.id));
@@ -139,11 +154,12 @@ function mountIVR(app){
     if (d === '1') {
       const out = req.app.locals.answerTransfer(t, actor.id, t.buyer_kg);
       if (out.error) return respond(res, speak(out.error) + nextStep(req, actor));
-      return respond(res, speak(`Confirmed. ${t.buyer_kg} kilos to ${t.buyer_name}.`) + nextStep(req, actor));
+      return respond(res, say(req, `Confirmed. ${t.buyer_kg} kilos to ${t.buyer_name}.`, 'confirmed', ...digitKeys(t.buyer_kg), 'kilos') + nextStep(req, actor));
     }
-    if (d === '2') { req.app.locals.rejectTransfer(t, actor.id); return respond(res, speak('Rejected.') + nextStep(req, actor)); }
+    if (d === '2') { req.app.locals.rejectTransfer(t, actor.id); return respond(res, prompt(req, 'rejected', 'Rejected.') + nextStep(req, actor)); }
     respond(res, speciesMenu(req, actor, false));
   });
+
    
     r.post('/species', (req, res) => {
     const actor = callerActor(req);
@@ -159,8 +175,10 @@ function mountIVR(app){
     if (!actor || !SPECIES[species]) return respond(res, '<Hangup/>');
     const kg = parseInt(String(req.body.Digits || '').replace(/\D/g, ''), 10);
     if (!(kg > 0)) return respond(res, askWeight(req, species));
-    if (kg > MAX_KG) return respond(res, speak(`${kg} kilos is too large. Please type the weight again.`) + askWeight(req, species));
-    const readback = speak(`You landed ${kg} kilos of ${SPECIES[species][1]}. Press 1 to confirm, or 2 to start again.`);
+        if (kg > MAX_KG) return respond(res, say(req, `${kg} kilos is too large. Please type the weight again.`, ...digitKeys(kg), 'kilos', 'toolarge') + askWeight(req, species));
+    const readback = say(req, `You landed ${kg} kilos of ${SPECIES[species][1]}. Press 1 to confirm, or 2 to start again.`,
+      ...digitKeys(kg), 'kilos', 'sp' + species, 'landed', 'confirm_or_restart');
+
     respond(res, gather(req, `/ivr/confirm?species=${species}&amp;kg=${kg}`, 1, readback) + prompt(req, 'noinput', 'We did not hear anything. Goodbye.') + '<Hangup/>');
   });
 
@@ -177,7 +195,9 @@ function mountIVR(app){
     const id = createLanding(actor, { species: SPECIES[species][0], quantity_kg: kg, harbour, vessel: actor.vessel,
       client_id: 'ivr-' + (req.body.CallUUID || Date.now()), source: 'ivr' });
     const spelled = id.replace(/-/g, ' ').split('').join(' ').replace(/\s+/g, ' ');
-    respond(res, speak(`Recorded. ${kg} kilos of ${SPECIES[species][1]}. Your batch number is ${spelled}. Again, ${spelled}. Thank you.`) + '<Hangup/>');
+        respond(res, say(req, `Recorded. ${kg} kilos of ${SPECIES[species][1]}. Your batch number is ${spelled}. Again, ${spelled}. Thank you.`,
+      'recorded', ...digitKeys(kg), 'kilos', 'sp' + species, 'batchno', ...spellKeys(id), 'again', ...spellKeys(id), 'thanks') + '<Hangup/>');
+
   });
  
     app.use('/ivr', r);

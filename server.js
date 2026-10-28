@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+if (require.main === module) require('./env').load(path.join(__dirname, '.env'));
 const QRCode = require('qrcode');
 const db = require('./db');
 const {buildEpcis} = require('./epcis');
