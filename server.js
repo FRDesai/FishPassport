@@ -52,14 +52,99 @@ function addEvent(batchId, type, actorId, data = {}, clientId = null) {
 }
 // Everything upstream and downstream of a batch, with the edges and events among them.
 function lineage(id) {
+  const ids = new Set([id]);
+  for (const r of q.ancestors.all(id)) ids.add(r.id);
+  for (const r of q.descendants.all(id)) ids.add(r.id);
+  const list = [...ids];
+  const ph = list.map(() => '?').join(',');
+  const nodes = list.map(i => q.batch.get(i));
+  const edges = db.prepare(`SELECT * FROM edges WHERE parent_id IN (${ph}) AND child_id IN (${ph})`).all(...list, ...list);
+  const events = db.prepare(`SELECT e.*, a.name AS actor_name, a.role AS actor_role
+                             FROM events e LEFT JOIN actors a ON a.id = e.actor_id
+                             WHERE e.batch_id IN (${ph}) ORDER BY e.id`).all(...list).map(parseEvent);
+  return { nodes, edges, events };
 }
 
 // Both sides recorded → confirm (split a child batch to the buyer) or dispute.
 function resolveTransfer(t) {
+  if (t.seller_kg == null || t.buyer_kg == null) return t;
+  const batch = q.batch.get(t.batch_id);
+  if (closeEnough(t.seller_kg, t.buyer_kg)) {
+    const kg = Math.min(t.seller_kg, batch.quantity_kg);
+    const childId = newId(prefixOf(batch.id));
+    q.insertBatch.run({ id: childId, species: batch.species, product: batch.product, quantity_kg: kg, grade: batch.grade,
+      owner_id: t.buyer_id, status: 'active', harbour: batch.harbour, vessel: batch.vessel, landed_at: batch.landed_at });
+    q.insertEdge.run(batch.id, childId, kg);
+    const remaining = round2(batch.quantity_kg - kg);
+    q.updateQty.run(Math.max(remaining, 0), remaining <= 0 ? 'consumed' : 'active', batch.id);
+    const sellerRole = q.actor.get(t.seller_id).role, buyerRole = q.actor.get(t.buyer_id).role; // so the trace can say "picked up" / "delivered"
+    addEvent(batch.id, 'TRANSFER', t.seller_id, { to: t.buyer_id, to_role: buyerRole, quantity_kg: kg, price: t.price, child_id: childId, transfer_id: t.id });
+    addEvent(childId, 'RECEIVE', t.buyer_id, { from: t.seller_id, from_role: sellerRole, quantity_kg: kg, parent_id: batch.id, transfer_id: t.id });
+    db.prepare(`UPDATE transfers SET status = 'confirmed', child_id = ?, resolved_at = datetime('now') WHERE id = ?`).run(childId, t.id);
+  } else {
+    addEvent(batch.id, 'DISPUTE', null, { seller_kg: t.seller_kg, buyer_kg: t.buyer_kg, transfer_id: t.id });
+    db.prepare(`UPDATE transfers SET status = 'disputed', resolved_at = datetime('now') WHERE id = ?`).run(t.id);
+  }
+  return q.transfer.get(t.id);
 }
-function answerTransfer() {
 
+const reservedKg = (batchId, exceptTransferId = 0) => db.prepare(`SELECT COALESCE(SUM(seller_kg), 0) AS kg FROM transfers
+  WHERE batch_id = ? AND status = 'pending' AND seller_kg IS NOT NULL AND id != ?`).get(batchId, exceptTransferId).kg;
+const hasPending = batchId => db.prepare(`SELECT 1 FROM transfers WHERE batch_id = ? AND status = 'pending'`).get(batchId);
+
+
+function answerTransfer(t, actorId, quantityKg) {
+  const side = t.seller_id === actorId ? 'seller_kg' : t.buyer_id === actorId ? 'buyer_kg' : null;
+  if (!side) return { error: 'This hand-over is not yours' };
+  if (t[side] != null) return { error: 'You already recorded your side' };
+  const batch = q.batch.get(t.batch_id);
+  if (batch.status !== 'active') { // sold or processed meanwhile → nothing left to hand over
+    db.prepare(`UPDATE transfers SET status = 'rejected', resolved_at = datetime('now') WHERE id = ?`).run(t.id);
+    return { error: `This batch was already ${batch.status}; the hand-over was cancelled` };
+  }
+  const kg = Number(quantityKg) > 0 ? Number(quantityKg) : (side === 'seller_kg' ? t.buyer_kg : t.seller_kg);
+  const free = round2(batch.quantity_kg - reservedKg(batch.id, t.id));
+  if (side === 'seller_kg' && kg > free + 0.001) return { error: `Only ${free} kg left in this batch` };
+  return { transfer: db.transaction(() => {
+    db.prepare(`UPDATE transfers SET ${side} = ? WHERE id = ?`).run(kg, t.id);
+    addEvent(t.batch_id, 'CLAIM', actorId, { role: side === 'seller_kg' ? 'seller' : 'buyer', quantity_kg: kg, transfer_id: t.id, matched: true });
+    return resolveTransfer(q.transfer.get(t.id));
+  })() };
 }
+
+function rejectTransfer(t, actorId) {
+  db.prepare(`UPDATE transfers SET status = 'rejected', resolved_at = datetime('now') WHERE id = ?`).run(t.id);
+  addEvent(t.batch_id, 'REJECT', actorId, { transfer_id: t.id });
+}
+app.locals.answerTransfer = answerTransfer; // the IVR (ivr.js) resolves hand-overs through the same code
+app.locals.rejectTransfer = rejectTransfer;
+
+const bad = (res, code, error) => res.status(code).json({ error });
+const pub = a => { if (!a) return a; const { pin, ...rest } = a; return rest; }; // never send the PIN hash to a browser
+const cleanPhone = p => String(p ?? '').replace(/\D/g, '').slice(-10);
+const loginFails = new Map(); // phone → { n, until }
+app.post('/api/login', (req, res) => {
+  const phone = cleanPhone(req.body.phone);
+  const f = loginFails.get(phone) || { n: 0, until: 0 };
+  if (f.until > Date.now()) return bad(res, 429, `Too many wrong PINs. Try again in ${Math.ceil((f.until - Date.now()) / 60000)} minutes`);
+  const a = db.prepare('SELECT * FROM actors WHERE phone = ?').get(phone);
+  if (!a || !checkPin(req.body.pin, a.pin)) {
+    f.n += 1; if (f.n >= 5) { f.until = Date.now() + 5 * 60000; f.n = 0; }
+    loginFails.set(phone, f);
+    return bad(res, 401, 'Wrong phone number or PIN');
+  }
+  loginFails.delete(phone);
+  db.prepare(`DELETE FROM sessions WHERE created_at < datetime('now', ?)`).run(`-${SESSION_DAYS} days`);
+  const token = newToken();
+  db.prepare('INSERT INTO sessions (token, actor_id) VALUES (?, ?)').run(token, a.id);
+  res.json({ token, actor: pub(a) });
+});
+app.post('/api/logout', (req, res) => {
+  const token = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  res.json({ ok: true });
+});
+
 
 const isPublic = (method, p) => p === '/login' || p === '/logout' ||
   (method === 'GET' && (p === '/actors' || p === '/demo-accounts' || /^\/batches\/[^/]+(\/qr\.png)?$/.test(p)));
@@ -94,8 +179,87 @@ app.get('/api/actors/:id/batches', (req, res) => {
 });
 
 
-function requireAuthority(req, res) {
-    const { batch_id, actor_id, counterparty_id, quantity_kg, price } = req.body;
+
+function phoneTaken(phone, exceptId) {
+  const other = db.prepare('SELECT name FROM actors WHERE phone = ? AND id != ?').get(phone, exceptId || 0);
+  return other ? `That phone number already belongs to ${other.name}` : null;
+}
+
+app.post('/api/actors', (req, res) => {
+  if (!requireAuthority(req, res)) return;
+  const { name, location, vessel } = req.body;
+  const phone = cleanPhone(req.body.phone);
+  if (!String(name || '').trim()) return bad(res, 400, 'Name is required');
+  if (phone.length !== 10) return bad(res, 400, 'Phone must be a 10-digit mobile number');
+  const taken = phoneTaken(phone); if (taken) return bad(res, 409, taken);
+  const pin = req.body.pin === undefined || req.body.pin === '' ? '1234' : String(req.body.pin);
+  if (!isPin(pin)) return bad(res, 400, 'PIN must be exactly 4 digits');
+  const info = db.prepare('INSERT INTO actors (name, role, location, phone, vessel, pin) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(String(name).trim(), 'fisher', location || null, phone, vessel || null, hashPin(pin));
+  res.status(201).json(pub(q.actor.get(info.lastInsertRowid)));
+});
+
+
+app.patch('/api/actors/:id', (req, res) => {
+  if (!requireAuthority(req, res)) return;
+  const a = q.actor.get(req.params.id);
+  if (!a) return bad(res, 404, 'Actor not found');
+  const next = { name: a.name, location: a.location, phone: a.phone, vessel: a.vessel };
+  for (const k of ['name', 'location', 'vessel']) if (req.body[k] !== undefined) next[k] = String(req.body[k]).trim() || null;
+  if (req.body.phone !== undefined) {
+    next.phone = cleanPhone(req.body.phone);
+    if (next.phone.length !== 10) return bad(res, 400, 'Phone must be a 10-digit mobile number');
+    const taken = phoneTaken(next.phone, a.id); if (taken) return bad(res, 409, taken);
+  }
+  if (!next.name) return bad(res, 400, 'Name is required');
+  if (req.body.pin !== undefined && req.body.pin !== '') {
+    if (!isPin(req.body.pin)) return bad(res, 400, 'PIN must be exactly 4 digits');
+    db.prepare('UPDATE actors SET pin = ? WHERE id = ?').run(hashPin(req.body.pin), a.id);
+    db.prepare('DELETE FROM sessions WHERE actor_id = ?').run(a.id); // a new PIN signs that person out everywhere
+  }
+  db.prepare('UPDATE actors SET name = ?, location = ?, phone = ?, vessel = ? WHERE id = ?').run(next.name, next.location, next.phone, next.vessel, a.id);
+  res.json(pub(q.actor.get(a.id)));
+});
+
+app.get('/api/me/batches', (req, res) => {
+  const me = req.me.id;
+  const rows = db.prepare(`SELECT * FROM batches WHERE owner_id = ? AND status = 'active' ORDER BY created_at DESC, rowid DESC`).all(me);
+  const past = db.prepare(`SELECT * FROM batches WHERE owner_id = ? AND status != 'active' ORDER BY created_at DESC, rowid DESC LIMIT 30`).all(me);
+  const inbox = db.prepare(`SELECT COUNT(*) AS c FROM transfers WHERE status = 'pending'
+                            AND ((seller_id = ? AND seller_kg IS NULL) OR (buyer_id = ? AND buyer_kg IS NULL))`).get(me, me).c;
+  res.json({ batches: rows, past, inbox });
+});
+
+
+// Fisher records a landing → new root batch + LANDING event.
+app.post('/api/landings', (req, res) => {
+  const { actor_id, species, quantity_kg, grade, harbour, vessel, landed_at, client_id } = req.body;
+  const actor = q.actor.get(actor_id);
+  if (!actor || actor.role !== 'fisher') return bad(res, 400, 'Only a fisher can record a landing');
+  if (!species || !(Number(quantity_kg) > 0)) return bad(res, 400, 'Species and quantity are required');
+  const id = createLanding(actor, { species, quantity_kg, grade, harbour, vessel, landed_at, client_id, source: 'web' });
+  res.status(201).json(q.batch.get(id));
+});
+
+app.get('/api/batches/:id', (req, res) => {
+  const b = q.batch.get(req.params.id.toUpperCase());
+  if (!b) return bad(res, 404, 'Batch not found');
+  const pending = db.prepare(`SELECT t.*, s.name AS seller_name, s.role AS seller_role, bu.name AS buyer_name, bu.role AS buyer_role FROM transfers t
+                              JOIN actors s ON s.id = t.seller_id JOIN actors bu ON bu.id = t.buyer_id
+                              WHERE t.batch_id = ? AND t.status = 'pending'`).all(b.id);
+  res.json({ batch: b, events: q.events.all(b.id).map(parseEvent), lineage: lineage(b.id), pending });
+});
+
+app.get('/api/batches/:id/qr.png', async (req, res) => {
+  const url = `${baseUrl(req)}/trace/${req.params.id.toUpperCase()}`;
+  res.set('X-QR-Link', url); // handy for checking what the QR encodes
+  res.type('png').send(await QRCode.toBuffer(url, { width: 360, margin: 1 }));
+});
+
+
+// Handshake: either side records the hand-over; the second record matches the first.
+app.post('/api/transfers', (req, res) => {
+  const { batch_id, actor_id, counterparty_id, quantity_kg, price } = req.body;
   const batch = q.batch.get(String(batch_id || '').toUpperCase());
   const me = q.actor.get(actor_id);
   if (!batch || !me) return bad(res, 404, 'Batch or actor not found');
@@ -110,6 +274,7 @@ function requireAuthority(req, res) {
   if (kg > batch.quantity_kg + 0.001) return bad(res, 400, `Only ${batch.quantity_kg} kg left in this batch`);
   const free = round2(batch.quantity_kg - reservedKg(batch.id));
   if (iAmSeller && kg > free + 0.001) return bad(res, 400, `Only ${free} kg left in this batch, the rest is already promised to another buyer`);
+
 
  const result = db.transaction(() => {
     let t = db.prepare(`SELECT * FROM transfers WHERE batch_id = ? AND seller_id = ? AND buyer_id = ? AND status = 'pending'`)
@@ -135,35 +300,36 @@ function requireAuthority(req, res) {
     const seller = q.actor.get(sellerId);
     if (seller && seller.role === 'fisher') ivr.callFisher(req, seller, result.transfer).catch(err => console.warn('IVR: outbound call failed:', err.message));
   }
+});
 
 
 
-    app.get('/api/inbox', (req, res) => {
+app.get('/api/inbox', (req, res) => {
   const a = Number(req.query.actor);
   res.json(db.prepare(`SELECT t.*, b.species, b.product, s.name AS seller_name, s.role AS seller_role, bu.name AS buyer_name, bu.role AS buyer_role
                        FROM transfers t JOIN batches b ON b.id = t.batch_id
                        JOIN actors s ON s.id = t.seller_id JOIN actors bu ON bu.id = t.buyer_id
                        WHERE t.status = 'pending' AND ((t.seller_id = ? AND t.seller_kg IS NULL) OR (t.buyer_id = ? AND t.buyer_kg IS NULL))
                        ORDER BY t.created_at DESC`).all(a, a));
-    });
+});
 
-    app.post('/api/transfers/:id/confirm', (req, res) => {
+app.post('/api/transfers/:id/confirm', (req, res) => {
   const t = q.transfer.get(req.params.id);
   if (!t || t.status !== 'pending') return bad(res, 404, 'No pending hand-over with that id');
   const out = answerTransfer(t, req.me.id, req.body.quantity_kg);
   if (out.error) return bad(res, /not yours/.test(out.error) ? 403 : /already recorded/.test(out.error) ? 409 : 400, out.error);
   res.json(out);
-    });
+});
 
-    app.post('/api/transfers/:id/reject', (req, res) => {
+app.post('/api/transfers/:id/reject', (req, res) => {
   const t = q.transfer.get(req.params.id);
   if (!t || t.status !== 'pending') return bad(res, 404, 'No pending hand-over with that id');
   if (t.seller_id !== req.me.id && t.buyer_id !== req.me.id) return bad(res, 403, 'This hand-over is not yours');
   rejectTransfer(t, req.me.id);
   res.json({ ok: true });
-    });
-
-    app.post('/api/transfers/:id/resolve', (req, res) => {
+});
+// Fisheries Department settles a dispute: a final weight (→ confirmed, buyer gets the batch) or cancel.
+app.post('/api/transfers/:id/resolve', (req, res) => {
   if (!requireRole(req, res, 'authority', 'Fisheries Department')) return;
   const t = q.transfer.get(req.params.id);
   if (!t || t.status !== 'disputed') return bad(res, 404, 'No disputed hand-over with that id');
@@ -183,10 +349,10 @@ function requireAuthority(req, res) {
     return resolveTransfer(q.transfer.get(t.id));
   })();
   res.json({ transfer: out });
-    });
+});
 
 // Processor merges N input batches into one output batch.
-    app.post('/api/process', (req, res) => {
+app.post('/api/process', (req, res) => {
   const { actor_id, input_ids, product, quantity_kg } = req.body;
   const me = q.actor.get(actor_id);
   if (!me || me.role !== 'processor') return bad(res, 400, 'Only a processor can do this');
@@ -212,8 +378,9 @@ function requireAuthority(req, res) {
     addEvent(id, 'PROCESS', me.id, { product, inputs: inputs.map(b => ({ id: b.id, quantity_kg: b.quantity_kg })), input_kg: inputKg, output_kg: outKg });
   })();
   res.status(201).json(q.batch.get(id));
-    });
-     app.post('/api/merge', (req, res) => {
+});
+
+app.post('/api/merge', (req, res) => {
   const { actor_id, input_ids } = req.body;
   const me = q.actor.get(actor_id);
   if (!me || me.role !== 'trader') return bad(res, 403, 'Only a trader can combine batches');
@@ -241,8 +408,11 @@ function requireAuthority(req, res) {
     addEvent(id, 'MERGE', me.id, { inputs: inputs.map(b => ({ id: b.id, quantity_kg: b.quantity_kg })), quantity_kg: kg });
   })();
   res.status(201).json(q.batch.get(id));
-    });
-     app.post('/api/sales', (req, res) => {
+});
+
+
+// Retailer sells to a consumer → batch is closed.
+app.post('/api/sales', (req, res) => {
   const { batch_id, actor_id, client_id, channel } = req.body;
   const batch = q.batch.get(String(batch_id || '').toUpperCase());
   const me = q.actor.get(actor_id);
@@ -257,8 +427,9 @@ function requireAuthority(req, res) {
     addEvent(batch.id, 'SALE', me.id, { quantity_kg: batch.quantity_kg, channel: channel || 'shop' }, client_id || null);
   })();
   res.json(q.batch.get(batch.id));
-    });
-     app.get('/api/admin/stats', (req, res) => {
+});
+
+app.get('/api/admin/stats', (req, res) => {
   if (!requireRole(req, res, 'authority', 'Fisheries Department')) return;
   const one = sql => db.prepare(sql).get().c;
   res.json({
@@ -282,8 +453,7 @@ function requireAuthority(req, res) {
     recent: db.prepare(`SELECT e.*, a.name AS actor_name FROM events e LEFT JOIN actors a ON a.id = e.actor_id
                         ORDER BY e.id DESC LIMIT 25`).all().map(parseEvent),
   });
-     });
-}
+});
 
 app.get('/api/export/epcis', (req, res) => {
   if (!requireRole(req, res, 'authority', 'Fisheries Department')) return;
