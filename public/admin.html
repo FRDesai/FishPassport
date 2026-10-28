@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard · Fish Passport</title><link rel="stylesheet" href="/app.css"><script src="/i18n.js"></script><script src="/app.js"></script></head>
+<body><div class="wrap wide">
+  <h1 data-i18n="admin_title">Fisheries Department dashboard</h1>
+  <div id="stats" class="grid3"></div>
+  <div class="row no-print"><a class="btn small" id="exportBtn" href="#">⬇ <span data-i18n="export">Export EPCIS 2.0 / GDST JSON</span></a><button class="btn small secondary" onclick="load()" data-i18n="refresh">Refresh</button></div>
+  <h2 data-i18n="disputes_h">Disputed hand-overs</h2><div id="disputes"></div>
+  <h2 data-i18n="fishers_h">Fishers</h2>
+  <p class="muted">Registered fishers sign in to the app with their mobile number and a 4-digit PIN, and can record a landing by calling the Fish Passport number from that mobile. Harbour and boat are filled in automatically for phone landings. Type a new PIN and press Save to reset one.</p>
+  <form id="addFisher" class="card no-print">
+    <b data-i18n="add_fisher">Add a fisher</b>
+    <div class="grid2">
+      <div><label data-i18n="name">Name</label><input name="name" required placeholder="e.g. Lakshmi Mogaveera"></div>
+      <div><label data-i18n="harbour">Harbour</label><select name="location"><option>Malpe</option><option>Mangaluru</option><option>Karwar</option><option>Gangolli</option><option>Honnavar</option><option>Bhatkal</option></select></div>
+    </div>
+    <div class="grid2">
+      <div><label data-i18n="mobile">Mobile number</label><input name="phone" inputmode="numeric" required placeholder="10 digits"></div>
+      <div><label data-i18n="boat_reg">Boat registration</label><input name="vessel" placeholder="e.g. IND-KA-07-MM-1234"></div>
+    </div>
+    <div class="grid2">
+      <div><label data-i18n="pin_label">Sign-in PIN (4 digits)</label><input name="pin" inputmode="numeric" maxlength="4" placeholder="1234 if left empty"></div>
+    </div>
+    <button class="btn small" type="submit" data-i18n="add_fisher">Add a fisher</button>
+  </form>
+    <div id="fishers" class="card"></div>
+  <h2 data-i18n="transporters_h">Transporters</h2>
+  <p class="muted">Transporters sign in with their mobile number and PIN, then pick up and deliver batches. Each pickup and delivery is confirmed by the other side. Type a new PIN and press Save to reset one.</p>
+  <div id="transporters" class="card"></div>
+  <h2 data-i18n="by_harbour_h">Landings by harbour and species</h2><div id="harbour" class="card"></div>
+  <h2 data-i18n="all_batches_h">All batches</h2><div id="batches" class="card"></div>
+  <h2 data-i18n="recent_h">Recent activity</h2><div id="recent"></div>
+</div>
+<script>
+    const me = requireActor();
+if (me.role !== 'authority') location.replace('/home');
+$('#exportBtn').href = '/api/export/epcis?token=' + encodeURIComponent(Session.token); // a plain link cannot carry the auth header
+async function load() {
+  const s = await api('/api/admin/stats');
+  const T = s.totals;
+  $('#stats').innerHTML = [['landings', 'st_landings'], ['landed_kg', 'st_kg'], ['batches', 'st_batches'], ['confirmed', 'st_confirmed'], ['pending', 'st_pending'], ['disputed', 'st_disputed']]
+    .map(([k, l]) => `<div class="card stat"><div class="n">${Math.round(T[k] * 10) / 10}</div><div class="l">${t(l)}</div></div>`).join('');
+  // The department settles a dispute: type the weight it stands by and Settle (buyer gets a batch), or Cancel it.
+  $('#disputes').innerHTML = s.disputes.length ? `<table><tr><th>Batch</th><th>Seller says</th><th>Buyer says</th><th>Gap</th><th>When</th><th>${t('final_kg')}</th></tr>` +
+    s.disputes.map(d => `<tr><td><a href="/batch/${d.batch_id}" class="id">${d.batch_id}</a><br><span class="muted">${esc(d.species)}</span></td><td>${esc(d.seller_name)}<br><b>${d.seller_kg} kg</b></td><td>${esc(d.buyer_name)}<br><b>${d.buyer_kg} kg</b></td><td><span class="badge disputed">${Math.round(Math.abs(d.seller_kg - d.buyer_kg) * 10) / 10} kg</span></td><td>${fmtDate(d.resolved_at)}</td>
+      <td><form data-resolve="${d.id}" class="row no-print"><input name="quantity_kg" type="number" step="0.1" value="${Math.round((d.seller_kg + d.buyer_kg) * 5) / 10}" class="narrow"><button class="btn small" type="submit">${t('settle')}</button><button class="btn small secondary" type="button" data-cancel="${d.id}">${t('cancel')}</button></form></td></tr>`).join('') + '</table>'
+    : `<p class="muted">${t('no_disputes')}</p>`;
+  $('#harbour').innerHTML = s.by_harbour.length ? `<table><tr><th>Harbour</th><th>Species</th><th>Landings</th><th>kg</th></tr>` +
+    s.by_harbour.map(r => `<tr><td>${esc(r.harbour || '?')}</td><td>${esc(r.species)}</td><td>${r.landings}</td><td><b>${r.kg}</b></td></tr>`).join('') + '</table>' : '<p class="muted">No landings yet.</p>';
+  $('#batches').innerHTML = `<table><tr><th>Batch</th><th>Product</th><th>kg</th><th>Owner</th><th>Status</th></tr>` +
+    s.batches.map(b => `<tr><td><a href="/batch/${b.id}" class="id">${b.id}</a></td><td>${esc(b.product === 'Whole fish' ? b.species : b.product + ' · ' + b.species)}</td><td>${b.quantity_kg}</td><td>${esc(b.owner_name)}<br><span class="muted">${b.owner_role}</span></td><td><span class="badge ${b.status}">${b.status}</span></td></tr>`).join('') + '</table>';
+  await renderJourney($('#recent'), s.recent);
+  await loadFishers();
+}
+const HARBOURS = ['Malpe', 'Mangaluru', 'Karwar', 'Gangolli', 'Honnavar', 'Bhatkal'];
+async function loadFishers() {
+  _actors = null; // refetch after edits
+  const fishers = (await actors()).filter(a => a.role === 'fisher');
+  // Inputs sit in table cells and point at a small form per fisher via the form="" attribute (forms cannot wrap table rows).
+  $('#fishers').innerHTML = fishers.length ? fishers.map(f => `<form id="edit-${f.id}" data-edit="${f.id}"></form>`).join('') +
+    `<table><tr><th>Name</th><th>Harbour</th><th>Mobile</th><th>Boat</th><th>New PIN</th><th></th></tr>` +
+    fishers.map(f => `<tr>
+      <td><b>${esc(f.name)}</b></td>
+      <td><select name="location" form="edit-${f.id}">${HARBOURS.map(h => `<option ${h === f.location ? 'selected' : ''}>${h}</option>`).join('')}</select></td>
+      <td><input name="phone" form="edit-${f.id}" value="${esc(f.phone || '')}" inputmode="numeric"></td>
+      <td><input name="vessel" form="edit-${f.id}" value="${esc(f.vessel || '')}"></td>
+      <td><input name="pin" form="edit-${f.id}" inputmode="numeric" maxlength="4" placeholder="keep" class="narrow"></td>
+      <td><button class="btn small secondary" type="submit" form="edit-${f.id}">${t('save')}</button></td></tr>`).join('') + '</table>'
+    : '<p class="muted">No fishers yet. Add one above.</p>';
+      const carriers = (await actors()).filter(a => a.role === 'transporter');
+  $('#transporters').innerHTML = carriers.length ? carriers.map(f => `<form id="edit-${f.id}" data-edit="${f.id}"></form>`).join('') +
+    `<table><tr><th>Name</th><th>Base / route</th><th>Mobile</th><th>Vehicle</th><th>New PIN</th><th></th></tr>` +
+    carriers.map(f => `<tr>
+      <td><b>${esc(f.name)}</b></td>
+      <td><input name="location" form="edit-${f.id}" value="${esc(f.location || '')}"></td>
+      <td><input name="phone" form="edit-${f.id}" value="${esc(f.phone || '')}" inputmode="numeric"></td>
+      <td><input name="vessel" form="edit-${f.id}" value="${esc(f.vessel || '')}"></td>
+      <td><input name="pin" form="edit-${f.id}" inputmode="numeric" maxlength="4" placeholder="keep" class="narrow"></td>
+      <td><button class="btn small secondary" type="submit" form="edit-${f.id}">${t('save')}</button></td></tr>`).join('') + '</table>'
+    : '<p class="muted">No transporters yet.</p>';
+}
+$('#addFisher').addEventListener('submit', async e => {
+  e.preventDefault();
+  const v = Object.fromEntries(new FormData(e.target));
+  try { const a = await api('/api/actors', v); toast(`Added ${a.name}. PIN: ${v.pin || '1234'}`); e.target.reset(); await loadFishers(); }
+  catch (err) { toast(err.message, true); }
+});
+$('#disputes').addEventListener('submit', async e => {
+  e.preventDefault(); const id = e.target.dataset.resolve; if (!id) return;
+  try { const r = await api(`/api/transfers/${id}/resolve`, { quantity_kg: Number(e.target.quantity_kg.value) }); toast(`Settled → ${r.transfer.child_id}`); await load(); }
+  catch (err) { toast(err.message, true); }
+});
+$('#disputes').addEventListener('click', async e => {
+  const b = e.target.closest('[data-cancel]'); if (!b) return;
+  try { await api(`/api/transfers/${b.dataset.cancel}/resolve`, { cancel: true }); toast('Cancelled'); await load(); } catch (err) { toast(err.message, true); }
+});
+for (const list of ['#fishers', '#transporters']) $(list).addEventListener('submit', async e => {
+  e.preventDefault();
+  const id = e.target.dataset.edit; if (!id) return;
+  const v = Object.fromEntries(new FormData(e.target));
+  try { const a = await api(`/api/actors/${id}`, v, { method: 'PATCH' }); toast(v.pin ? `Saved ${a.name}. New PIN set.` : `Saved ${a.name}`); await loadFishers(); }
+  catch (err) { toast(err.message, true); }
+});
+load();
+</script></body></html>
