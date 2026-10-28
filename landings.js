@@ -1,11 +1,12 @@
-const cryto= require ('crypto');
+// const cryto= require ('crypto');
+const crypto = require('node:crypto');
 const db= require ('./db');
 
 const HARBOUR_CODES ={Malpe: 'MLP', Mangaluru: 'MNG', Karwar: 'KWR', Gangolli: 'GNG', Honnavar: 'HNV', Bhatkal: 'BTK' };
 const  ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 function newId(prefix){
-    for (let tries=0; tries<50;trie+s++){
+    for (let tries=0; tries<50;tries++){
     let s = '';
     for (const b of crypto.randomBytes(4)) s += ALPHABET[b % ALPHABET.length];
     const id = `FP-${prefix}-${s}`;

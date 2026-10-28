@@ -81,14 +81,14 @@ if (!actorCols.includes('pin')) db.exec('ALTER TABLE actors ADD COLUMN pin TEXT'
 
 
 const ACTORS = [
-    ['Suresh Kharvi',       'fisher',       'Malpe', '9900000001', 'IND-KA_07-MM-1234'],
-    ['Ganesh Salian',       'fisher',       'Mangaluru', '9900000002', 'IND-KA_07-MM-1234'],
-    ['ravi Traders',       'trader',       'Malpe Auction Yard', '9900000003', null],
-    ['Suresh Kharvi',       'fisher',       'Malpe', '9900000004', null],
-    ['Suresh Kharvi',       'fisher',       'Malpe', '9900000005', null],
-    ['Suresh Kharvi',       'fisher',       'Malpe', '9900000006', null],
-    ['Suresh Kharvi',       'fisher',       'Malpe', '9900000007', null],
-    ['Suresh Kharvi',       'fisher',       'Malpe', '9900000008', 'KA-20-AB-1234'],
+  ['Suresh Kharvi',                'fisher',    'Malpe',                   '9900000001', 'IND-KA-07-MM-1234'],
+  ['Ganesh Salian',                'fisher',    'Mangaluru',               '9900000002', 'IND-KA-02-MM-0456'],
+  ['Ravi Traders',                 'trader',    'Malpe Auction Yard',      '9900000003', null],
+  ['Fatima Sea Foods',             'trader',    'Udupi',                   '9900000004', null],
+  ['Coastal Fresh Processing',     'processor', 'Baikampady, Mangaluru',   '9900000005', null],
+  ['Ocean Mart',                   'retailer',  'Indiranagar, Bengaluru',  '9900000006', null],
+  ['Dept of Fisheries, Karnataka', 'authority', 'Bengaluru',               '9900000007', null],
+  ['Malpe Cold Chain Logistics',   'transporter', 'Malpe – Mangaluru route', '9900000008', 'KA-20-AB-1234'], // vessel = vehicle number
 ];
 
 if (db.prepare('SELECT COUNT(*) AS c FROM actors').get().c === 0) {
