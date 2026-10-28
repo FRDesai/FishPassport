@@ -31,7 +31,7 @@ db.exec(`
      CREATE TABLE IF NOT EXISTS batches(
      id TEXT PRIMARY KEY,
      species TEXT NOT NULL,
-     product TEXT NOT NULL DEFAULT 'whole fish'
+     product TEXT NOT NULL DEFAULT 'whole fish',
      quantity_kg REAL NOT NULL,
      grade TEXT,
      owner_id INTEGER NOT NULL REFERENCES actors(id),
