@@ -34,7 +34,8 @@ const I18N = {
     trace_footer: 'Every hand-over above was confirmed by both parties. Fish Passport · GDST / EPCIS 2.0 compatible.',
     scan_hint: 'Point the camera at a Fish Passport QR sticker. (Camera needs HTTPS or localhost.)', or_type: 'Or type the batch ID', open: 'Open', not_code: 'Not a Fish Passport code',
     admin_title: 'Fisheries Department dashboard', disputes_h: 'Disputed hand-overs', fishers_h: 'Fishers', by_harbour_h: 'Landings by harbour and species',
-    all_batches_h: 'All batches', recent_h: 'Recent activity', export: 'Export EPCIS 2.0 / GDST JSON', refresh: 'Refresh', add_fisher: 'Add a fisher', transporters_h: 'Transporters',
+
+    all_batches_h: 'All batches', recent_h: 'Recent activity', export: 'Export EPCIS 2.0 / GDST JSON', refresh: 'Refresh', add_fisher: 'Add a fisher', transporters_h: 'Transporters', cards_h: 'Weighing station cards',
     settle: 'Settle', cancel: 'Cancel', final_kg: 'Final kg', no_disputes: 'No disputes. Every hand-over matched on both sides.',
     st_landings: 'landings', st_kg: 'kg landed', st_batches: 'batches', st_confirmed: 'confirmed hand-overs', st_pending: 'waiting for 2nd side', st_disputed: 'disputes',
     role_fisher: 'Fisher', role_fisher_desc: 'Lands the catch at the harbour and starts the passport. Records it in the app, or by calling from a basic phone.',
@@ -82,7 +83,7 @@ const I18N = {
     trace_footer: 'ಮೇಲಿನ ಪ್ರತಿ ಹಸ್ತಾಂತರವನ್ನು ಎರಡೂ ಕಡೆಯವರು ದೃಢೀಕರಿಸಿದ್ದಾರೆ. ಮೀನು ಪಾಸ್‌ಪೋರ್ಟ್ · GDST / EPCIS 2.0 ಹೊಂದಾಣಿಕೆ.',
     scan_hint: 'ಕ್ಯಾಮೆರಾವನ್ನು ಮೀನು ಪಾಸ್‌ಪೋರ್ಟ್ QR ಸ್ಟಿಕ್ಕರ್‌ಗೆ ತೋರಿಸಿ.', or_type: 'ಅಥವಾ ಬ್ಯಾಚ್ ಐಡಿ ಟೈಪ್ ಮಾಡಿ', open: 'ತೆರೆಯಿರಿ', not_code: 'ಇದು ಮೀನು ಪಾಸ್‌ಪೋರ್ಟ್ ಕೋಡ್ ಅಲ್ಲ',
     admin_title: 'ಮೀನುಗಾರಿಕೆ ಇಲಾಖೆ ಡ್ಯಾಶ್‌ಬೋರ್ಡ್', disputes_h: 'ವಿವಾದಿತ ಹಸ್ತಾಂತರಗಳು', fishers_h: 'ಮೀನುಗಾರರು', by_harbour_h: 'ಬಂದರು ಮತ್ತು ಜಾತಿ ಪ್ರಕಾರ ಇಳುವರಿ',
-    all_batches_h: 'ಎಲ್ಲಾ ಬ್ಯಾಚ್‌ಗಳು', recent_h: 'ಇತ್ತೀಚಿನ ಚಟುವಟಿಕೆ', export: 'EPCIS 2.0 / GDST JSON ರಫ್ತು', refresh: 'ರಿಫ್ರೆಶ್', add_fisher: 'ಮೀನುಗಾರರನ್ನು ಸೇರಿಸಿ', transporters_h: 'ಸಾಗಣೆದಾರರು',
+    all_batches_h: 'ಎಲ್ಲಾ ಬ್ಯಾಚ್‌ಗಳು', recent_h: 'ಇತ್ತೀಚಿನ ಚಟುವಟಿಕೆ', export: 'EPCIS 2.0 / GDST JSON ರಫ್ತು', refresh: 'ರಿಫ್ರೆಶ್', add_fisher: 'ಮೀನುಗಾರರನ್ನು ಸೇರಿಸಿ', transporters_h: 'ಸಾಗಣೆದಾರರು', cards_h: 'ತೂಕ ಕೇಂದ್ರದ ಕಾರ್ಡ್‌ಗಳು',
     settle: 'ಇತ್ಯರ್ಥ', cancel: 'ರದ್ದು', final_kg: 'ಅಂತಿಮ ಕೆ.ಜಿ', no_disputes: 'ವಿವಾದಗಳಿಲ್ಲ. ಪ್ರತಿ ಹಸ್ತಾಂತರ ಎರಡೂ ಕಡೆ ಹೊಂದಿದೆ.',
     st_landings: 'ಇಳುವರಿಗಳು', st_kg: 'ಕೆ.ಜಿ ಇಳಿಸಲಾಗಿದೆ', st_batches: 'ಬ್ಯಾಚ್‌ಗಳು', st_confirmed: 'ದೃಢೀಕೃತ ಹಸ್ತಾಂತರಗಳು', st_pending: 'ಎರಡನೇ ಕಡೆಗಾಗಿ ಕಾಯುತ್ತಿವೆ', st_disputed: 'ವಿವಾದಗಳು',
     role_fisher: 'ಮೀನುಗಾರ', role_fisher_desc: 'ಬಂದರಿನಲ್ಲಿ ಮೀನು ಇಳಿಸಿ ಪಾಸ್‌ಪೋರ್ಟ್ ಆರಂಭಿಸುತ್ತಾರೆ. ಆ್ಯಪ್‌ನಲ್ಲಿ ಅಥವಾ ಸಾಮಾನ್ಯ ಫೋನ್‌ನಿಂದ ಕರೆ ಮಾಡಿ ದಾಖಲಿಸಬಹುದು.',

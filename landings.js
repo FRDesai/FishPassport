@@ -33,4 +33,10 @@ function newId(prefix){
   })();
         return id;
 }
+
+function harbourOf(actor) {
+  const loc = (actor.location || '').trim();
+  return Object.keys(HARBOUR_CODES).find(h => loc.toLowerCase().includes(h.toLowerCase())) || loc || null;
+}
+
  module.exports = { createLanding, newId,HARBOUR_CODES };
