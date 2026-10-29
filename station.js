@@ -4,7 +4,7 @@ const express = require('express');
 const db = require('./db');
 const { baseUrl }= require('./baseurl');
 const {createLanding, harbourOf} =require('./landings');
-const {SPECIES, shortSpecies}=reuire('./ivr');
+const {SPECIES, shortSpecies}=require('./ivr');
 const MAX_KG=2000;
 const MAX_SKEW_S=300;
 
