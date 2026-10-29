@@ -1,29 +1,30 @@
+// server.js — Express API + static frontend. Start: `node server.js` (add --reset to wipe the DB).
 const express = require('express');
 const path = require('path');
-if (require.main === module) require('./env').load(path.join(__dirname, '.env'));
 const QRCode = require('qrcode');
 const db = require('./db');
-const {buildEpcis} = require('./epcis');
-const {createLanding, newId}=require('./landings');
-const {isPin, hashPin,checkPin,newToken}=require('./auth');
-const {baseUrl} = require('./baseurl');
+const { buildEpcis } = require('./epcis');
+const { createLanding, newId } = require('./landings');
+const { isPin, hashPin, checkPin, newToken } = require('./auth');
+const { baseUrl } = require('./baseurl');
+const BUYER_ROLES = ['trader', 'processor', 'retailer', 'transporter']; // who can take a batch over (a transporter holds custody, not ownership)
+const SESSION_DAYS = 30;
 
-const BUYER_ROLES =['trader','processor','retailer','transporter'];
-const SESSION_DAYS=30
-
-const PORT = process.env.PORT||3000;
-const app=express();
-app.set('trust proxy',true);
+const PORT = process.env.PORT || 3000;
+const app = express();
+app.set('trust proxy', true); // so QR links use https when served through a tunnel
+const station = require('./station');
+station(app); // harbour weighing station; mounted before express.json because it verifies a signature over the raw body
 app.use(express.json());
-app.use(express.static(path.join(__dirname,'public')));
+app.use(express.static(path.join(__dirname, 'public')));
 const ivr = require('./ivr');
-ivr(app);
+ivr(app); // phone IVR for fishers (Plivo)
 
-
+// ---------- helpers ----------
 const prefixOf = id => id.split('-')[1] || 'KAR';
-const parseEvent = e => ({...e,data: JSON.parse(e.data || '{}')});
-const round2 = n => Math.round(n*100)/100;
-const closeEnough =(a,b) => Math.abs(a-b) <= Math.max(0.5,0.02 * Math.max(a,b));  //2% or 5kg difference
+const parseEvent = e => ({ ...e, data: JSON.parse(e.data || '{}') });
+const round2 = n => Math.round(n * 100) / 100;
+const closeEnough = (a, b) => Math.abs(a - b) <= Math.max(0.5, 0.02 * Math.max(a, b)); // 2% or 0.5 kg
 
 const q = {
   actor: db.prepare('SELECT * FROM actors WHERE id = ?'),
@@ -51,6 +52,7 @@ const q = {
 function addEvent(batchId, type, actorId, data = {}, clientId = null) {
   return q.insertEvent.run(clientId, batchId, type, actorId, JSON.stringify(data));
 }
+
 // Everything upstream and downstream of a batch, with the edges and events among them.
 function lineage(id) {
   const ids = new Set([id]);
@@ -89,11 +91,12 @@ function resolveTransfer(t) {
   return q.transfer.get(t.id);
 }
 
+// Kilos already promised to other buyers on this batch (pending hand-overs the seller recorded).
 const reservedKg = (batchId, exceptTransferId = 0) => db.prepare(`SELECT COALESCE(SUM(seller_kg), 0) AS kg FROM transfers
   WHERE batch_id = ? AND status = 'pending' AND seller_kg IS NOT NULL AND id != ?`).get(batchId, exceptTransferId).kg;
 const hasPending = batchId => db.prepare(`SELECT 1 FROM transfers WHERE batch_id = ? AND status = 'pending'`).get(batchId);
 
-
+// The second side answers a pending hand-over (app Inbox, batch page, or the fisher's phone). Returns { transfer } or { error }.
 function answerTransfer(t, actorId, quantityKg) {
   const side = t.seller_id === actorId ? 'seller_kg' : t.buyer_id === actorId ? 'buyer_kg' : null;
   if (!side) return { error: 'This hand-over is not yours' };
@@ -112,7 +115,6 @@ function answerTransfer(t, actorId, quantityKg) {
     return resolveTransfer(q.transfer.get(t.id));
   })() };
 }
-
 function rejectTransfer(t, actorId) {
   db.prepare(`UPDATE transfers SET status = 'rejected', resolved_at = datetime('now') WHERE id = ?`).run(t.id);
   addEvent(t.batch_id, 'REJECT', actorId, { transfer_id: t.id });
@@ -123,6 +125,11 @@ app.locals.rejectTransfer = rejectTransfer;
 const bad = (res, code, error) => res.status(code).json({ error });
 const pub = a => { if (!a) return a; const { pin, ...rest } = a; return rest; }; // never send the PIN hash to a browser
 const cleanPhone = p => String(p ?? '').replace(/\D/g, '').slice(-10);
+const { cleanCard } = station;
+
+// ---------- sign-in ----------
+// Phone + 4-digit PIN → session token. The browser sends it as "Authorization: Bearer <token>" on every API call.
+// Five wrong PINs lock the number for 5 minutes — a 4-digit PIN cannot survive a guessing script otherwise.
 const loginFails = new Map(); // phone → { n, until }
 app.post('/api/login', (req, res) => {
   const phone = cleanPhone(req.body.phone);
@@ -146,12 +153,12 @@ app.post('/api/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-
+// Everything else under /api needs a token, except what shoppers and the login page use.
+// Who you are comes from the token: any actor_id / ?actor= in the request is overwritten.
 const isPublic = (method, p) => p === '/login' || p === '/logout' ||
   (method === 'GET' && (p === '/actors' || p === '/demo-accounts' || /^\/batches\/[^/]+(\/qr\.png)?$/.test(p)));
 const sessionActor = token => token && db.prepare(`SELECT a.* FROM sessions s JOIN actors a ON a.id = s.actor_id
   WHERE s.token = ? AND s.created_at > datetime('now', ?)`).get(token, `-${SESSION_DAYS} days`);
-
 app.use('/api', (req, res, next) => {
   // ?token= is for plain download links (the EPCIS export) that cannot carry a header.
   const token = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '') || String(req.query.token || '');
@@ -164,8 +171,10 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-app.get('/api/actors', (req, res) => res.json(db.prepare(`SELECT id, name, role, location, vessel${req.me ? ', phone' : ''} FROM actors ORDER BY role, name`).all()));
-
+// ---------- API ----------
+// Names are public (the trace page shows them); phone numbers only for signed-in users.
+app.get('/api/actors', (req, res) => res.json(db.prepare(`SELECT id, name, role, location, vessel${req.me ? ', phone, card_uid' : ''} FROM actors ORDER BY role, name`).all()));
+// The seeded demo accounts, with their (fake) numbers, for the sign-in page's "tap to fill" list.
 app.get('/api/demo-accounts', (req, res) => {
   const ph = db.DEMO_PHONES.map(() => '?').join(',');
   res.json(db.prepare(`SELECT id, name, role, location, phone FROM actors WHERE phone IN (${ph}) ORDER BY role, name`).all(...db.DEMO_PHONES));
@@ -185,8 +194,6 @@ function requireAuthority(req, res) {
   if (!me || me.role !== 'authority') { bad(res, 403, 'Only the Fisheries Department can manage fishers'); return null; }
   return me;
 }
-
-
 function phoneTaken(phone, exceptId) {
   const other = db.prepare('SELECT name FROM actors WHERE phone = ? AND id != ?').get(phone, exceptId || 0);
   return other ? `That phone number already belongs to ${other.name}` : null;
@@ -206,7 +213,6 @@ app.post('/api/actors', (req, res) => {
   res.status(201).json(pub(q.actor.get(info.lastInsertRowid)));
 });
 
-
 app.patch('/api/actors/:id', (req, res) => {
   if (!requireAuthority(req, res)) return;
   const a = q.actor.get(req.params.id);
@@ -219,6 +225,14 @@ app.patch('/api/actors/:id', (req, res) => {
     const taken = phoneTaken(next.phone, a.id); if (taken) return bad(res, 409, taken);
   }
   if (!next.name) return bad(res, 400, 'Name is required');
+  // Any role can hold a station card (fishers, traders, ...). Empty clears it; one card belongs to one person.
+  if (req.body.card_uid !== undefined) {
+    const uid = cleanCard(req.body.card_uid) || null;
+    if (uid && !/^[0-9A-F]{8,20}$/.test(uid)) return bad(res, 400, 'Card ID must be the 8 to 20 hex characters the station shows');
+    const other = uid && db.prepare('SELECT name FROM actors WHERE card_uid = ? AND id != ?').get(uid, a.id);
+    if (other) return bad(res, 409, `That card already belongs to ${other.name}`);
+    db.prepare('UPDATE actors SET card_uid = ? WHERE id = ?').run(uid, a.id);
+  }
   if (req.body.pin !== undefined && req.body.pin !== '') {
     if (!isPin(req.body.pin)) return bad(res, 400, 'PIN must be exactly 4 digits');
     db.prepare('UPDATE actors SET pin = ? WHERE id = ?').run(hashPin(req.body.pin), a.id);
@@ -236,7 +250,6 @@ app.get('/api/me/batches', (req, res) => {
                             AND ((seller_id = ? AND seller_kg IS NULL) OR (buyer_id = ? AND buyer_kg IS NULL))`).get(me, me).c;
   res.json({ batches: rows, past, inbox });
 });
-
 
 // Fisher records a landing → new root batch + LANDING event.
 app.post('/api/landings', (req, res) => {
@@ -263,33 +276,28 @@ app.get('/api/batches/:id/qr.png', async (req, res) => {
   res.type('png').send(await QRCode.toBuffer(url, { width: 360, margin: 1 }));
 });
 
-
-// Handshake: either side records the hand-over; the second record matches the first.
-app.post('/api/transfers', (req, res) => {
-  const { batch_id, actor_id, counterparty_id, quantity_kg, price } = req.body;
-  const batch = q.batch.get(String(batch_id || '').toUpperCase());
-  const me = q.actor.get(actor_id);
-  if (!batch || !me) return bad(res, 404, 'Batch or actor not found');
-  if (batch.status !== 'active') return bad(res, 400, `This batch is already ${batch.status}`);
-  const kg = Number(quantity_kg);
-  if (!(kg > 0)) return bad(res, 400, 'Quantity is required');
+// One side records a hand-over of `batch`; the second record matches the first. Returns { transfer, matched }
+// or { error, code }. `extra` is merged into the CLAIM event (the weighing station adds its id and reading).
+function recordClaim(batch, me, counterpartyId, quantityKg, price, extra = {}) {
+  if (batch.status !== 'active') return { code: 400, error: `This batch is already ${batch.status}` };
+  const kg = Number(quantityKg);
+  if (!(kg > 0)) return { code: 400, error: 'Quantity is required' };
   const iAmSeller = batch.owner_id === me.id;
   const sellerId = batch.owner_id;
-  const buyerId = iAmSeller ? Number(counterparty_id) : me.id;
+  const buyerId = iAmSeller ? Number(counterpartyId) : me.id;
   const buyer = Number.isFinite(buyerId) ? q.actor.get(buyerId) : null;
-  if (!buyer || buyerId === sellerId || !BUYER_ROLES.includes(buyer.role)) return bad(res, 400, 'Choose a trader, processor, retailer or transporter as the other side');
-  if (kg > batch.quantity_kg + 0.001) return bad(res, 400, `Only ${batch.quantity_kg} kg left in this batch`);
+  if (!buyer || buyerId === sellerId || !BUYER_ROLES.includes(buyer.role)) return { code: 400, error: 'Choose a trader, processor, retailer or transporter as the other side' };
+  if (kg > batch.quantity_kg + 0.001) return { code: 400, error: `Only ${batch.quantity_kg} kg left in this batch` };
   const free = round2(batch.quantity_kg - reservedKg(batch.id));
-  if (iAmSeller && kg > free + 0.001) return bad(res, 400, `Only ${free} kg left in this batch, the rest is already promised to another buyer`);
+  if (iAmSeller && kg > free + 0.001) return { code: 400, error: `Only ${free} kg left in this batch, the rest is already promised to another buyer` };
 
-
- const result = db.transaction(() => {
+  return db.transaction(() => {
     let t = db.prepare(`SELECT * FROM transfers WHERE batch_id = ? AND seller_id = ? AND buyer_id = ? AND status = 'pending'`)
       .get(batch.id, sellerId, buyerId);
     let matched = false;
     if (t) {
       const mySide = iAmSeller ? 'seller_kg' : 'buyer_kg';
-      if (t[mySide] != null) return { error: 'You already recorded this hand-over. Waiting for the other side.' };
+      if (t[mySide] != null) return { code: 409, error: 'You already recorded this hand-over. Waiting for the other side.' };
       db.prepare(`UPDATE transfers SET ${mySide} = ?, price = COALESCE(price, ?) WHERE id = ?`).run(kg, price ?? null, t.id);
       matched = true;
     } else {
@@ -297,23 +305,32 @@ app.post('/api/transfers', (req, res) => {
         .run(batch.id, sellerId, buyerId, iAmSeller ? kg : null, iAmSeller ? null : kg, price ?? null);
       t = q.transfer.get(info.lastInsertRowid);
     }
-    addEvent(batch.id, 'CLAIM', me.id, { role: iAmSeller ? 'seller' : 'buyer', counterparty: iAmSeller ? buyerId : sellerId, quantity_kg: kg, transfer_id: t.id, matched });
+    addEvent(batch.id, 'CLAIM', me.id, { role: iAmSeller ? 'seller' : 'buyer', counterparty: iAmSeller ? buyerId : sellerId, quantity_kg: kg, transfer_id: t.id, matched, ...extra });
     return { transfer: resolveTransfer(q.transfer.get(t.id)), matched };
   })();
-  if (result.error) return bad(res, 409, result.error);
+}
+// A buyer just claimed from a fisher: ring the fisher so they can press 1 to confirm. Never blocks or fails the request.
+function ringSellerIfFisher(req, result) {
+  if (result.matched) return;
+  const seller = q.actor.get(result.transfer.seller_id);
+  if (seller && seller.role === 'fisher') ivr.callFisher(req, seller, result.transfer).catch(err => console.warn('IVR: outbound call failed:', err.message));
+}
+app.locals.recordClaim = recordClaim; // the weighing station (station.js) records sales through the same code
+app.locals.ringSellerIfFisher = ringSellerIfFisher;
+
+app.post('/api/transfers', (req, res) => {
+  const { batch_id, actor_id, counterparty_id, quantity_kg, price } = req.body;
+  const batch = q.batch.get(String(batch_id || '').toUpperCase());
+  const me = q.actor.get(actor_id);
+  if (!batch || !me) return bad(res, 404, 'Batch or actor not found');
+  const result = recordClaim(batch, me, counterparty_id, quantity_kg, price);
+  if (result.error) return bad(res, result.code, result.error);
   res.status(201).json(result);
-  // A buyer just claimed from a fisher: ring the fisher so they can press 1 to confirm. Never blocks or fails the request.
-  if (!iAmSeller && !result.matched) {
-    const seller = q.actor.get(sellerId);
-    if (seller && seller.role === 'fisher') ivr.callFisher(req, seller, result.transfer).catch(err => console.warn('IVR: outbound call failed:', err.message));
-  }
+  if (batch.owner_id !== me.id) ringSellerIfFisher(req, result);
 });
 
-
-
 app.get('/api/inbox', (req, res) => {
-//   const a = Number(req.query.actor);
-  const a = req.me.id; 
+  const a = Number(req.query.actor);
   res.json(db.prepare(`SELECT t.*, b.species, b.product, s.name AS seller_name, s.role AS seller_role, bu.name AS buyer_name, bu.role AS buyer_role
                        FROM transfers t JOIN batches b ON b.id = t.batch_id
                        JOIN actors s ON s.id = t.seller_id JOIN actors bu ON bu.id = t.buyer_id
@@ -336,6 +353,7 @@ app.post('/api/transfers/:id/reject', (req, res) => {
   rejectTransfer(t, req.me.id);
   res.json({ ok: true });
 });
+
 // Fisheries Department settles a dispute: a final weight (→ confirmed, buyer gets the batch) or cancel.
 app.post('/api/transfers/:id/resolve', (req, res) => {
   if (!requireRole(req, res, 'authority', 'Fisheries Department')) return;
@@ -388,6 +406,8 @@ app.post('/api/process', (req, res) => {
   res.status(201).json(q.batch.get(id));
 });
 
+// Trader puts several batches of the same fish into one crate → one new batch with every input as a parent.
+// Unlike processing nothing is cut away, so the weight is exactly the sum of the inputs.
 app.post('/api/merge', (req, res) => {
   const { actor_id, input_ids } = req.body;
   const me = q.actor.get(actor_id);
@@ -417,7 +437,6 @@ app.post('/api/merge', (req, res) => {
   })();
   res.status(201).json(q.batch.get(id));
 });
-
 
 // Retailer sells to a consumer → batch is closed.
 app.post('/api/sales', (req, res) => {
@@ -468,7 +487,6 @@ app.get('/api/export/epcis', (req, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="fish-passport-epcis.json"');
   res.json(buildEpcis(db));
 });
-
 
 // ---------- pages ----------
 const page = name => (req, res) => res.sendFile(path.join(__dirname, 'public', name + '.html'));
