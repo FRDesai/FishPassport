@@ -21,8 +21,9 @@ const id = location.pathname.split('/').pop().toUpperCase();
   const handshakes = ev.filter(e => e.type === 'TRANSFER').length;
   const hours = landing ? Math.round((Date.now() - new Date(landing.data.landed_at || landing.created_at.replace(' ', 'T') + 'Z')) / 36e5) : null;
   $('#head').innerHTML = `
-    <div class="row"><span class="id big">${b.id}</span><span class="badge ${b.status}">${b.status}</span></div>
-    <div class="big-line"><b>${esc(b.product === 'Whole fish' ? b.species : b.product + ' · ' + b.species)}</b></div>
+        <div class="row"><span class="id big">${b.id}</span><span class="badge ${b.status}">${statusLabel(b.status)}</span></div>
+    <div class="big-line"><b>${esc(productName(b))}</b></div>
+
     <div class="muted">${t('now_with')} <b>${esc(b.owner_name)}</b>, ${esc(b.owner_location || '')}</div>
     ${landing ? `<div class="muted">${t('landed_at_h')} <b>${esc(landing.data.harbour || '?')}</b>${landing.data.vessel ? ' by boat ' + esc(landing.data.vessel) : ''} on ${fmtDate(landing.data.landed_at || landing.created_at)} by ${esc(landing.actor_name)}</div>` : ''}`;
   $('#summary').innerHTML = `

@@ -17,8 +17,8 @@ if (me.role === 'fisher') $('#newBtn').style.display = '';
   if (inbox) $('#inboxNote').innerHTML = `<a class="card link" href="/inbox">🔔 <b>${inbox}</b> ${t('waiting_confirm')}</a>`;
   const card = b => `
     <a class="card link" href="/batch/${b.id}">
-      <div class="row"><span class="id">${b.id}</span><span class="badge ${b.status}">${b.status}</span></div>
-      <div><b>${b.quantity_kg} kg</b> ${esc(b.product === 'Whole fish' ? b.species : b.product + ' (' + b.species + ')')}</div>
+            <div class="row"><span class="id">${b.id}</span><span class="badge ${b.status}">${statusLabel(b.status)}</span></div>
+      <div><b>${b.quantity_kg} kg</b> ${esc(productName(b))}</div>
       <div class="muted">${esc(b.harbour || '')} · ${fmtDate(b.created_at)}</div>
     </a>`;
   $('#list').innerHTML = batches.length ? batches.map(card).join('') : `<p class="muted">${t('no_batches')}</p>`;

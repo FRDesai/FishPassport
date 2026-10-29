@@ -3,6 +3,7 @@ const I18N = {
   en: {
     brand: 'Fish Passport', home: 'My batches', new: 'New landing', scan: 'Find catch', inbox: 'Inbox', process: 'Process', admin: 'Dashboard', logout: 'Switch user',
     species: 'Species', weight: 'Weight (kg)', grade: 'Grade', harbour: 'Harbour', boat: 'Boat', landed: 'Landed at', record_landing: 'Record landing',
+    status_active: 'active', status_consumed: 'consumed', status_sold: 'sold', by_phone: 'recorded by phone call',
     sold_to: 'Sold to', price: 'Price per kg (optional)', record_sale: 'Record hand-over', i_bought: 'I bought from this batch', confirm: 'Confirm', reject: 'Reject',
     sell_consumer: 'Sold to consumer', trace: 'Public trace page', print_qr: 'Print / save QR', journey: 'Journey', lineage: 'Lineage', pending: 'Waiting for the other side',
     no_batches: 'No active batches yet.', owner: 'Owner', status: 'Status', saved_offline: 'No signal. Saved on this phone, will sync automatically.',
@@ -51,6 +52,7 @@ const I18N = {
   kn: {
     brand: 'ಮೀನು ಪಾಸ್‌ಪೋರ್ಟ್', home: 'ನನ್ನ ಬ್ಯಾಚ್‌ಗಳು', new: 'ಹೊಸ ಇಳುವರಿ', scan: 'ಮೀನು ಹುಡುಕಿ', inbox: 'ಇನ್‌ಬಾಕ್ಸ್', process: 'ಸಂಸ್ಕರಣೆ', admin: 'ಡ್ಯಾಶ್‌ಬೋರ್ಡ್', logout: 'ಬಳಕೆದಾರ ಬದಲಿಸಿ',
     species: 'ಮೀನಿನ ಜಾತಿ', weight: 'ತೂಕ (ಕೆ.ಜಿ)', grade: 'ದರ್ಜೆ', harbour: 'ಬಂದರು', boat: 'ದೋಣಿ', landed: 'ಇಳಿಸಿದ ಸಮಯ', record_landing: 'ಇಳುವರಿ ದಾಖಲಿಸಿ',
+        status_active: 'ಸಕ್ರಿಯ', status_consumed: 'ಬಳಸಲಾಗಿದೆ', status_sold: 'ಮಾರಾಟವಾಗಿದೆ', by_phone: 'ಫೋನ್ ಕರೆಯಿಂದ ದಾಖಲು',
     sold_to: 'ಮಾರಿದ್ದು', price: 'ಕೆ.ಜಿ ಬೆಲೆ (ಐಚ್ಛಿಕ)', record_sale: 'ಹಸ್ತಾಂತರ ದಾಖಲಿಸಿ', i_bought: 'ಈ ಬ್ಯಾಚ್‌ನಿಂದ ಖರೀದಿಸಿದೆ', confirm: 'ದೃಢೀಕರಿಸಿ', reject: 'ತಿರಸ್ಕರಿಸಿ',
     sell_consumer: 'ಗ್ರಾಹಕರಿಗೆ ಮಾರಲಾಗಿದೆ', trace: 'ಸಾರ್ವಜನಿಕ ಟ್ರೇಸ್ ಪುಟ', print_qr: 'QR ಮುದ್ರಿಸಿ', journey: 'ಪ್ರಯಾಣ', lineage: 'ವಂಶಾವಳಿ', pending: 'ಇನ್ನೊಂದು ಕಡೆಗಾಗಿ ಕಾಯುತ್ತಿದೆ',
     no_batches: 'ಇನ್ನೂ ಸಕ್ರಿಯ ಬ್ಯಾಚ್‌ಗಳಿಲ್ಲ.', owner: 'ಮಾಲೀಕ', status: 'ಸ್ಥಿತಿ', saved_offline: 'ಸಿಗ್ನಲ್ ಇಲ್ಲ. ಫೋನ್‌ನಲ್ಲಿ ಉಳಿಸಲಾಗಿದೆ, ನಂತರ ಕಳುಹಿಸಲಾಗುತ್ತದೆ.',
@@ -99,5 +101,14 @@ const I18N = {
 };
 function lang() { return localStorage.getItem('fp_lang') || 'en'; }
 function t(key) { return (I18N[lang()] && I18N[lang()][key]) || I18N.en[key] || key; }
+// Species in Kannada script when the app is in Kannada; the stored English name otherwise.
+const SPECIES_KN = { 'Indian Mackerel (Bangude)': 'ಬಂಗುಡೆ', 'Oil Sardine (Boothai)': 'ಬೂತಾಯಿ', 'Seer Fish (Anjal)': 'ಅಂಜಲ್',
+  'Silver Pomfret (Manji)': 'ಮಾಂಜಿ', 'Lady Fish (Kane)': 'ಕಾಣೆ', 'Prawns': 'ಸಿಗಡಿ' };
+function speciesName(s) { return lang() === 'kn' && SPECIES_KN[s] ? SPECIES_KN[s] : s; }
+// "Bangude" for whole fish, "Fillet · Bangude" for a processed product.
+function productName(b) { return b.product === 'Whole fish' ? speciesName(b.species) : b.product + ' · ' + speciesName(b.species); }
+// Batch status in the current language ("active" → "ಸಕ್ರಿಯ"); unknown statuses fall back to the raw word.
+function statusLabel(s) { const k = 'status_' + s; return (I18N[lang()] && I18N[lang()][k]) || I18N.en[k] || s; }
+
 function toggleLang() { localStorage.setItem('fp_lang', lang() === 'en' ? 'kn' : 'en'); location.reload(); }
 function applyI18n(root = document) { root.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); }); }

@@ -48,7 +48,8 @@ async function load() {
   $('#harbour').innerHTML = s.by_harbour.length ? `<table><tr><th>Harbour</th><th>Species</th><th>Landings</th><th>kg</th></tr>` +
     s.by_harbour.map(r => `<tr><td>${esc(r.harbour || '?')}</td><td>${esc(r.species)}</td><td>${r.landings}</td><td><b>${r.kg}</b></td></tr>`).join('') + '</table>' : '<p class="muted">No landings yet.</p>';
   $('#batches').innerHTML = `<table><tr><th>Batch</th><th>Product</th><th>kg</th><th>Owner</th><th>Status</th></tr>` +
-    s.batches.map(b => `<tr><td><a href="/batch/${b.id}" class="id">${b.id}</a></td><td>${esc(b.product === 'Whole fish' ? b.species : b.product + ' · ' + b.species)}</td><td>${b.quantity_kg}</td><td>${esc(b.owner_name)}<br><span class="muted">${b.owner_role}</span></td><td><span class="badge ${b.status}">${b.status}</span></td></tr>`).join('') + '</table>';
+        s.batches.map(b => `<tr><td><a href="/batch/${b.id}" class="id">${b.id}</a></td><td>${esc(productName(b))}</td><td>${b.quantity_kg}</td><td>${esc(b.owner_name)}<br><span class="muted">${b.owner_role}</span></td><td><span class="badge ${b.status}">${statusLabel(b.status)}</span></td></tr>`).join('') + '</table>';
+
   await renderJourney($('#recent'), s.recent);
   await loadFishers();
 }

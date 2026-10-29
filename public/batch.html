@@ -23,9 +23,11 @@ async function load() {
   let data;
   try { data = await api('/api/batches/' + id); } catch (err) { $('#head').innerHTML = `<b>${esc(err.message)}</b>`; return; }
   const b = data.batch, mine = b.owner_id === me.id;
+  // landed by a fisher over the phone (IVR) rather than in the app
+  const byPhone = data.events.some(e => e.type === 'LANDING' && e.data && e.data.source === 'ivr');
   $('#head').innerHTML = `
-    <div class="row"><span class="id big">${b.id}</span><span class="badge ${b.status}">${b.status}</span></div>
-    <div class="big-line"><b>${b.quantity_kg} kg</b> ${esc(b.product === 'Whole fish' ? b.species : b.product + ' · ' + b.species)}</div>
+    <div class="row"><span class="id big">${b.id}</span><span class="badge ${b.status}">${statusLabel(b.status)}</span>${byPhone ? `<span class="badge phone">📞 ${t('by_phone')}</span>` : ''}</div>
+    <div class="big-line"><b>${b.quantity_kg} kg</b> ${esc(productName(b))}</div>
     <div class="muted">${t('owner')}: <b>${esc(b.owner_name)}</b> (${b.owner_role}, ${esc(b.owner_location || '')})</div>
     <div class="muted">${b.grade ? 'Grade ' + b.grade + ' · ' : ''}${esc(b.harbour || '')}${b.vessel ? ' · boat ' + esc(b.vessel) : ''} · landed ${fmtDate(b.landed_at)}</div>`;
   $('#qr').src = `/api/batches/${b.id}/qr.png`; $('#qrLink').href = `/api/batches/${b.id}/qr.png`; $('#traceLink').href = `/trace/${b.id}`;
