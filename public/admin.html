@@ -27,6 +27,9 @@
   <h2 data-i18n="transporters_h">Transporters</h2>
   <p class="muted">Transporters sign in with their mobile number and PIN, then pick up and deliver batches. Each pickup and delivery is confirmed by the other side. Type a new PIN and press Save to reset one.</p>
   <div id="transporters" class="card"></div>
+   <h2 data-i18n="cards_h">Weighing station cards</h2>
+  <p class="muted">At the harbour weighing station a fisher taps their card to weigh a declared catch, and a buyer taps theirs to buy it at the scale's weight. To register a card, press D on the station, tap the card, and type the ID it shows here. Leave it empty to remove a lost card.</p>
+  <div id="cards" class="card"></div>
   <h2 data-i18n="by_harbour_h">Landings by harbour and species</h2><div id="harbour" class="card"></div>
   <h2 data-i18n="all_batches_h">All batches</h2><div id="batches" class="card"></div>
   <h2 data-i18n="recent_h">Recent activity</h2><div id="recent"></div>
@@ -79,6 +82,14 @@ async function loadFishers() {
       <td><input name="pin" form="edit-${f.id}" inputmode="numeric" maxlength="4" placeholder="keep" class="narrow"></td>
       <td><button class="btn small secondary" type="submit" form="edit-${f.id}">${t('save')}</button></td></tr>`).join('') + '</table>'
     : '<p class="muted">No transporters yet.</p>';
+
+     const holders = (await actors()).filter(a => a.role !== 'authority');
+  $('#cards').innerHTML = holders.map(f => `<form id="card-${f.id}" data-edit="${f.id}"></form>`).join('') +
+    `<table><tr><th>Name</th><th>Role</th><th>Card ID</th><th></th></tr>` +
+    holders.map(f => `<tr>
+      <td><b>${esc(f.name)}</b></td><td><span class="muted">${f.role}</span></td>
+      <td><input name="card_uid" form="card-${f.id}" value="${esc(f.card_uid || '')}" placeholder="e.g. 04A1B2C3"></td>
+      <td><button class="btn small secondary" type="submit" form="card-${f.id}">${t('save')}</button></td></tr>`).join('') + '</table>';
 }
 $('#addFisher').addEventListener('submit', async e => {
   e.preventDefault();
@@ -95,7 +106,8 @@ $('#disputes').addEventListener('click', async e => {
   const b = e.target.closest('[data-cancel]'); if (!b) return;
   try { await api(`/api/transfers/${b.dataset.cancel}/resolve`, { cancel: true }); toast('Cancelled'); await load(); } catch (err) { toast(err.message, true); }
 });
-for (const list of ['#fishers', '#transporters']) $(list).addEventListener('submit', async e => {
+
+for (const list of ['#fishers', '#transporters', '#cards']) $(list).addEventListener('submit', async e => {
   e.preventDefault();
   const id = e.target.dataset.edit; if (!id) return;
   const v = Object.fromEntries(new FormData(e.target));

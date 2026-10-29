@@ -64,6 +64,11 @@ function buildEpics (db) {
         inputQuantityList: (d.inputs || []).map(i => ({ epcClass: lot(i.id), quantity: i.quantity_kg, uom: 'KGM' })),
         outputQuantityList: [{ epcClass: lot(r.batch_id), quantity: d.quantity_kg, uom: 'KGM' }],
         ilmd: { 'gdst:productForm': r.product, 'gdst:productOwner': party(r.actor_id) } });
+        } else if (r.type === 'WEIGH') {
+      eventList.push({ ...base, type: 'ObjectEvent', action: 'OBSERVE', bizStep: BIZ_STEP.WEIGH,
+        readPoint: { id: `urn:fishpassport:station:${d.station_id}` },
+        epcList: [lot(r.batch_id)],
+        quantityList: [{ epcClass: lot(r.batch_id), quantity: d.net_kg, uom: 'KGM' }] });
     } else if (r.type === 'SALE') {
       eventList.push({ ...base, type: 'ObjectEvent', action: 'DELETE', bizStep: BIZ_STEP.SALE,
         epcList: [lot(r.batch_id)],
@@ -81,4 +86,4 @@ function buildEpics (db) {
   };
 }
 
-module.exports = buildEpics;
+module.exports = { buildEpics };

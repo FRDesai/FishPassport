@@ -71,7 +71,8 @@ async function load() {
   $('#actions').innerHTML = html;
   applyI18n();
   renderGraph($('#graph'), data.lineage, b.id);
-  await renderJourney($('#journey'), data.lineage.events.filter(e => e.batch_id === b.id || ['TRANSFER', 'RECEIVE', 'PROCESS', 'MERGE', 'LANDING', 'SALE'].includes(e.type)));
+
+  await renderJourney($('#journey'), data.lineage.events.filter(e => e.batch_id === b.id || ['TRANSFER', 'RECEIVE', 'PROCESS', 'MERGE', 'LANDING', 'WEIGH', 'SALE'].includes(e.type)));
 }
 
 async function post(path, body, msg) { try { const r = await api(path, body); toast(msg(r)); await load(); } catch (err) { toast(err.message, true); } }

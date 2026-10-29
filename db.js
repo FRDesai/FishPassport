@@ -79,6 +79,9 @@ db.exec(`
 if (!actorCols.includes('vessel')) db.exec('ALTER TABLE actors ADD COLUMN vessel TEXT');
 if (!actorCols.includes('pin')) db.exec('ALTER TABLE actors ADD COLUMN pin TEXT');
 
+if (!actorCols.includes('card_uid')) db.exec('ALTER TABLE actors ADD COLUMN card_uid TEXT');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_actors_card ON actors(card_uid) WHERE card_uid IS NOT NULL');
+
 
 const ACTORS = [
   ['Suresh Kharvi',                'fisher',    'Malpe',                   '9900000001', 'IND-KA-07-MM-1234'],
